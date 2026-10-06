@@ -1,152 +1,239 @@
 from __future__ import annotations
 
-import json
 import re
-import sys
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
+
+# mjai-reviewer のレポートHTMLから、自分の全判断（打牌・鳴き・立直など）を抽出する。
+# Mortal（日本語表記: プレイヤー: / N巡目）と Akochan（英語表記: Player: / Turn N）の両方に対応する。
+
+PLAYER_ROLE_LABELS = ("プレイヤー", "Player")
+DISCARD_WORDS = {"打", "Discard"}
 
 
 # --- 牌ID抽出 ---
 def get_tile_id(tag: Any) -> str | None:
     if not tag:
         return None
-    return tag.get("href", "").replace("#pai-", "")
+    href = tag.get("href") or tag.get("xlink:href") or ""
+    return href.replace("#pai-", "") or None
 
 
-# --- 手牌と副露を分離せずすべて取得する関数 ---
-def extract_tiles(entry: Any) -> tuple[list[str], list[str]]:
+def _svg_tile(svg: Tag) -> str | None:
+    return get_tile_id(svg.find("use"))
+
+
+# --- アクション（打牌・鳴きなど）の解析 ---
+def action_parts(nodes: list[Any]) -> list[dict[str, str]]:
+    """ノード列を [{"tile": "5s"}, {"text": "チー"}, ...] の形に変換する。"""
+    parts: list[dict[str, str]] = []
+    for node in nodes:
+        if isinstance(node, NavigableString):
+            text = re.sub(r"\s+", " ", str(node)).strip()
+            if text:
+                parts.append({"text": text})
+        elif isinstance(node, Tag):
+            if node.name == "svg":
+                tile = _svg_tile(node)
+                if tile:
+                    parts.append({"tile": tile})
+            elif "role" in (node.get("class") or []):
+                continue
+            else:
+                parts.extend(action_parts(list(node.children)))
+    return parts
+
+
+def action_label(parts: list[dict[str, str]]) -> str:
+    """表示用パーツを比較・JSON用の文字列にする。
+    例: 打 5s → "5s" / 7s 8s チー → "7s8sチー" / スルー → "スルー"
     """
-    手牌・副露を分けず、tehai-state内のすべての牌を抽出する
-    """
+    out: list[str] = []
+    for p in parts:
+        if "tile" in p:
+            out.append(p["tile"])
+        else:
+            words = [w for w in p["text"].split(" ") if w and w not in DISCARD_WORDS]
+            out.append("".join(words))
+    return "".join(out)
+
+
+# reviewer のHTMLは </td> </li> を省略しているため、html.parser では
+# 後続の要素が入れ子として解釈される。入れ子の同名要素を除いた「自身の子」だけを扱う。
+def _own_children(tag: Tag) -> list[Any]:
+    return [c for c in tag.children if not (isinstance(c, Tag) and c.name == tag.name)]
+
+
+def _row_cells(row: Tag) -> list[Tag]:
+    return [td for td in row.find_all("td") if td.find_parent("tr") is row]
+
+
+def _parse_ev(td: Tag | None) -> float | None:
+    if td is None:
+        return None
+    text = "".join(c.get_text() if isinstance(c, Tag) else str(c) for c in _own_children(td))
+    try:
+        return float(re.sub(r"\s+", "", text))
+    except ValueError:
+        return None
+
+
+# --- 手牌の解析 ---
+def extract_hand(entry: Tag) -> dict[str, Any]:
+    hand: list[str] = []
+    tsumo: str | None = None
+    tsumo_label = ""
+    fuuro: list[list[dict[str, Any]]] = []
     tehai: list[str] = []
 
     tehai_ul = entry.find("ul", class_="tehai-state")
-    if not tehai_ul:
-        return tehai, []
+    if tehai_ul:
+        meld_index: dict[int, int] = {}
+        for use in tehai_ul.find_all("use"):
+            tile = get_tile_id(use)
+            if not tile:
+                continue
+            # JSON用の tehai は、従来どおり手牌・ツモ・副露をHTML順にすべて並べる
+            tehai.append(tile)
 
-    for use_tag in tehai_ul.find_all("use"):
-        tile_id = get_tile_id(use_tag)
-        if tile_id:
-            tehai.append(tile_id)
+            nearest_ul = use.find_parent("ul")
+            nearest_li = use.find_parent("li")
+            li_classes = (nearest_li.get("class") or []) if nearest_li else []
+            if nearest_ul is not None and "consumed" in (nearest_ul.get("class") or []):
+                key = id(nearest_ul)
+                if key not in meld_index:
+                    meld_index[key] = len(fuuro)
+                    fuuro.append([])
+                fuuro[meld_index[key]].append({"tile": tile, "rotated": "rotated" in li_classes})
+            elif "tsumo" in li_classes:
+                tsumo = tile
+                tsumo_label = (nearest_li.get("before") or "").strip()
+            else:
+                hand.append(tile)
 
-    return tehai, []
+    return {"hand": hand, "tsumo": tsumo, "tsumo_label": tsumo_label, "fuuro": fuuro, "tehai": tehai}
 
 
-def find_player_discard(entry: Any) -> str | None:
-    """実HTMLでは style 付き span ではなく、Player: / Akochan: の文脈にある tile を拾う。"""
-    for span in entry.find_all("span"):
-        text = span.get_text(" ", strip=True)
-        if not text:
+# --- 局と巡目 ---
+def get_kyoku_info(section: Tag) -> tuple[str, str, str]:
+    kyoku, kyoku_id, end_status = "Unknown", "", ""
+    h1 = section.find("h1", class_="kyoku-heading")
+    if h1:
+        kyoku_id = h1.get("id") or ""
+        div = h1.find("div")
+        kyoku = (div or h1).get_text(strip=True)
+        status = h1.find(class_="end-status")
+        if status:
+            end_status = status.get_text(strip=True)
+    return kyoku, kyoku_id, end_status
+
+
+def get_turn(entry: Tag) -> int:
+    summary = entry.find("summary")
+    text = summary.get_text(" ", strip=True) if summary else ""
+    m = re.search(r"(\d+)\s*巡目", text) or re.search(r"Turn\s+(\d+)", text, re.IGNORECASE)
+    return int(m.group(1)) if m else 0
+
+
+# --- 1判断分の解析 ---
+def parse_entry(entry: Tag) -> dict[str, Any] | None:
+    player_parts: list[dict[str, str]] | None = None
+    ai_name = "AI"
+    ai_nodes: list[Any] = []
+    collecting_ai = False
+    table_details: Tag | None = None
+
+    for node in entry.children:
+        if isinstance(node, Tag):
+            classes = node.get("class") or []
+            if node.name == "span" and "role" in classes:
+                # AI 側のラベル（例: "Mortal: "）。以降のノードが AI のアクション
+                ai_name = node.get_text(strip=True).rstrip(":： ")
+                collecting_ai = True
+                continue
+            if node.name == "span" and player_parts is None:
+                role = node.find("span", class_="role", recursive=False)
+                if role and any(lbl in role.get_text() for lbl in PLAYER_ROLE_LABELS):
+                    player_parts = action_parts(list(node.children))
+                    continue
+            if node.name == "details":
+                table_details = node
+                break
+        if collecting_ai:
+            ai_nodes.append(node)
+
+    if player_parts is None or table_details is None:
+        return None
+    table = table_details.find("table", class_="data")
+    rows = table.find("tbody").find_all("tr") if table and table.find("tbody") else []
+    if not rows:
+        return None
+
+    ai_parts = action_parts(ai_nodes)
+    player_label = action_label(player_parts)
+    ai_label = action_label(ai_parts)
+
+    player_ev: float | None = None
+    ai_ev: float | None = None
+    for row in rows:
+        tds = _row_cells(row)
+        if len(tds) < 2:
             continue
-        if text.startswith("Player:") or text.startswith("Akochan:"):
-            use_tag = span.find("use")
-            if use_tag:
-                return get_tile_id(use_tag)
-            for child in span.find_all("svg"):
-                use_tag = child.find("use")
-                if use_tag:
-                    return get_tile_id(use_tag)
+        row_label = action_label(action_parts(_own_children(tds[0])))
+        if player_ev is None and row_label == player_label:
+            player_ev = _parse_ev(tds[1])
+        if ai_ev is None and row_label == ai_label:
+            ai_ev = _parse_ev(tds[1])
 
-    player_span = entry.find("span", style=lambda s: s and "background" in s)
-    if player_span and player_span.find("use"):
-        return get_tile_id(player_span.find("use"))
+    if ai_ev is None:
+        first_tds = _row_cells(rows[0])
+        ai_ev = _parse_ev(first_tds[1]) if len(first_tds) >= 2 else 0.0
+        ai_ev = ai_ev or 0.0
+    if player_ev is None:
+        # 候補表にプレイヤーの選択が無い場合は差なしとして扱う（従来の挙動）
+        player_ev = ai_ev
 
-    return None
-
-
-# --- 局と巡目の取得 ---
-def get_kyoku_and_turn(entry: Any) -> tuple[str, int]:
-    section = entry.find_parent("section")
-    kyoku = "Unknown"
-    if section:
-        h1 = section.find("h1", class_="kyoku-heading")
-        if h1:
-            kyoku = h1.find("div").get_text(strip=True) if h1.find("div") else h1.get_text(strip=True)
-
-    summary = entry.find("summary").get_text(strip=True)
-    turn_match = re.search(r"Turn\s+(\d+)", summary, re.IGNORECASE)
-    turn = int(turn_match.group(1)) if turn_match else 0
-    return kyoku, turn
+    return {
+        "turn": get_turn(entry),
+        **extract_hand(entry),
+        "player_discard": player_label,
+        "player_parts": player_parts,
+        "player_ev": player_ev,
+        "ai_name": ai_name,
+        "ai_discard": ai_label,
+        "ai_parts": ai_parts,
+        "ai_ev": ai_ev,
+        "loss": ai_ev - player_ev,
+    }
 
 
-def get_ev_from_row(row: Any) -> float:
-    tds = row.find_all("td")
-    if len(tds) < 2:
-        return 0.0
-    ev_td = tds[1]
-    int_part = ev_td.find("span", class_="int")
-    frac_part = ev_td.find("span", class_="frac")
-    val_str = (int_part.text.strip() if int_part else "0") + (frac_part.text.strip() if frac_part else "0")
-    try:
-        return float(val_str)
-    except ValueError:
-        return 0.0
-
-
-def extract_max_loss_turn(html_path: str) -> dict[str, Any] | None:
+def _load_soup(html_path: str) -> BeautifulSoup:
     for enc in ["utf-8", "utf-16", "cp932", "utf-8-sig"]:
         try:
             with open(html_path, "r", encoding=enc) as f:
-                content = f.read()
-            soup = BeautifulSoup(content, "html.parser")
-            break
+                return BeautifulSoup(f.read(), "html.parser")
         except UnicodeDecodeError:
             continue
-    else:
-        raise Exception("どのエンコーディングでもファイルを読み込めませんでした。")
+    raise Exception("どのエンコーディングでもファイルを読み込めませんでした。")
 
-    max_loss = -1.0
-    max_loss_data: dict[str, Any] | None = None
 
+def extract_entries(html_path: str) -> list[dict[str, Any]]:
+    """レポート内の全判断を出現順に返す。値は丸めていない生の値。"""
+    soup = _load_soup(html_path)
+    entries: list[dict[str, Any]] = []
     for section in soup.find_all("section"):
+        kyoku, kyoku_id, end_status = get_kyoku_info(section)
         for entry in section.find_all("details", class_="entry"):
-            kyoku, turn = get_kyoku_and_turn(entry)
-
-            table = entry.find("table", class_="data")
-            if not table:
+            data = parse_entry(entry)
+            if data is None:
                 continue
-
-            tbody = table.find("tbody")
-            if not tbody:
-                continue
-
-            rows = tbody.find_all("tr")
-            if not rows:
-                continue
-
-            ai_best_row = rows[0]
-            ai_ev = get_ev_from_row(ai_best_row)
-
-            player_discard = find_player_discard(entry)
-            player_ev = ai_ev
-            for row in rows:
-                row_tile = get_tile_id(row.find("use"))
-                if row_tile and player_discard and row_tile == player_discard:
-                    player_ev = get_ev_from_row(row)
-                    break
-
-            loss = ai_ev - player_ev
-            if loss > max_loss:
-                max_loss = loss
-                tehai, _ = extract_tiles(entry)
-
-                max_loss_data = {
-                    "kyoku": kyoku,
-                    "turn": turn,
-                    "tehai": tehai,
-                    "player_discard": player_discard,
-                    "player_ev": round(player_ev, 5),
-                    "ai_discard": get_tile_id(ai_best_row.find("use")),
-                    "ai_ev": round(ai_ev, 5),
-                    "loss": round(loss, 5),
-                }
-    return max_loss_data
+            entries.append({"kyoku": kyoku, "kyoku_id": kyoku_id, "end_status": end_status, **data})
+    return entries
 
 
-def extract_report(html_path: str) -> dict[str, Any] | None:
-    max_loss_turn = extract_max_loss_turn(html_path)
-    if max_loss_turn is None:
+def extract_report(html_path: str) -> dict[str, Any]:
+    entries = extract_entries(html_path)
+    if not entries:
         return {"error": "No analysable report entries were found."}
-    return {"max_loss_turn": max_loss_turn}
+    return {"entries": entries}

@@ -1,13 +1,15 @@
 from __future__ import annotations
 import tempfile
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 import extract
 import interactakochan
 import interactllm
+
+# この値以上の期待値差がある判断だけを「要注意」とし、LLMのコメントを付ける
+EV_DIFF_THRESHOLD = 0.15
 
 def write_temp_file(suffix: str, content: bytes) -> Path:
     temp_file = Path(tempfile.NamedTemporaryFile(suffix=suffix, delete=False).name)
@@ -24,56 +26,58 @@ def remove_file(path: Path | None) -> None:
         pass
 
 
-def convert_tile_detail(tile_str: str | None) -> dict[str, Any]:
-    if not tile_str:
-        return {"emoji": "", "is_red": False}
-    
-    t = tile_str.lower().strip()
-    is_red = False
-    
-    # 赤ドラ判定 (末尾が 'r')
-    if t.endswith("r"):
-        is_red = True
-        t = t[:-1]
-    
-    # 字牌マップ
-    zi_map = {
-        "ton": "🀀", "1z": "🀀",
-        "nan": "🀁", "2z": "🀁",
-        "sha": "🀂", "3z": "🀂",
-        "pe": "🀃", "4z": "🀃",
-        "haku": "🀆", "5z": "🀆",
-        "hatsu": "🀅", "6z": "🀅",
-        "chun": "🀄", "7z": "🀄",
+def to_json_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """抽出結果をフロント向けJSONの1件分にする（期待値は小数2桁）。"""
+    return {
+        "kyoku": entry["kyoku"],
+        "turn": entry["turn"],
+        "tehai": entry["tehai"],
+        "player_discard": entry["player_discard"],
+        "player_ev": round(entry["player_ev"], 2),
+        "ai_discard": entry["ai_discard"],
+        "ai_ev": round(entry["ai_ev"], 2),
+        "loss": round(entry["loss"], 2),
+        "commentary": entry.get("commentary"),
     }
-    
-    if t in zi_map:
-        return {"emoji": zi_map[t], "is_red": is_red}
-        
-    # 数牌 (1m, 2p, 3s など) の判定
-    match = re.match(r"^(\d)(m|p|s)$", t)
-    if not match:
-        match = re.match(r"^(m|p|s)(\d)$", t)
-        if match:
-            suit, num_str = match.groups()
-        else:
-            return {"emoji": tile_str, "is_red": is_red}
-    else:
-        num_str, suit = match.groups()
-        
-    num = int(num_str)
-    
-    # Unicodeのコードポイント計算
-    if suit == "m":
-        code_point = 0x1F007 + (num - 1)
-    elif suit == "s":
-        code_point = 0x1F010 + (num - 1)
-    elif suit == "p":
-        code_point = 0x1F019 + (num - 1)
-    else:
-        return {"emoji": tile_str, "is_red": is_red}
-        
-    return {"emoji": chr(code_point), "is_red": is_red}
+
+
+def build_view(entries: list[dict[str, Any]], json_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """テンプレート描画用に、局ごとにまとめたデータと集計値を作る。"""
+    kyoku_groups: list[dict[str, Any]] = []
+    for entry, js in zip(entries, json_entries):
+        if not kyoku_groups or kyoku_groups[-1]["kyoku_id"] != entry["kyoku_id"] or kyoku_groups[-1]["kyoku"] != entry["kyoku"]:
+            kyoku_groups.append({
+                "kyoku": entry["kyoku"],
+                "kyoku_id": entry["kyoku_id"] or f"kyoku-{len(kyoku_groups)}",
+                "end_status": entry["end_status"],
+                "entries": [],
+            })
+        kyoku_groups[-1]["entries"].append({
+            **js,
+            "hand": entry["hand"],
+            "tsumo": entry["tsumo"],
+            "tsumo_label": entry["tsumo_label"],
+            "fuuro": entry["fuuro"],
+            "player_parts": entry["player_parts"],
+            "ai_parts": entry["ai_parts"],
+            "is_warning": entry["loss"] >= EV_DIFF_THRESHOLD,
+        })
+
+    total = len(entries)
+    matched = sum(1 for e in entries if e["player_discard"] == e["ai_discard"])
+    warnings = sum(1 for e in entries if e["loss"] >= EV_DIFF_THRESHOLD)
+    return {
+        "kyoku_groups": kyoku_groups,
+        "ai_name": entries[0]["ai_name"] if entries else "AI",
+        "ev_threshold": EV_DIFF_THRESHOLD,
+        "stats": {
+            "total": total,
+            "matched": matched,
+            "match_rate": round(matched / total * 100, 1) if total else 0.0,
+            "warnings": warnings,
+            "total_loss": round(sum(max(e["loss"], 0.0) for e in entries), 2),
+        },
+    }
 
 
 def run_analysis(
@@ -104,52 +108,25 @@ def run_analysis(
             raise ValueError("source_type must be one of json, file, url")
 
         temp_html_path = write_temp_file(".html", report_html.encode("utf-8"))
-        parsed_data = extract.extract_report(str(temp_html_path))
-        if parsed_data is None:
-            parsed_data = {}
-
-        # OCIのLLMと連携し、アドバイスを取得
-        advice = interactllm._generate_advice(parsed_data)
-        
-        max_loss_turn = parsed_data.get("max_loss_turn")
-        if not max_loss_turn:
+        entries = extract.extract_entries(str(temp_html_path))
+        if not entries:
             raise ValueError("No analysable report entries were found.")
 
-        # フラットな辞書データを作成
-        result_data = {
-            "kyoku": max_loss_turn.get("kyoku", "Unknown"),
-            "turn": max_loss_turn.get("turn", 0),
-            "tehai": max_loss_turn.get("tehai", []),
-            "player_discard": max_loss_turn.get("player_discard", ""),
-            "ai_discard": max_loss_turn.get("ai_discard", ""),
-            "loss": max_loss_turn.get("loss", 0.0),
-            "commentary": advice
-        }
+        # 期待値差がしきい値以上の判断にだけ、OCIのLLMでアドバイスを付ける
+        for entry in entries:
+            entry["commentary"] = None
+            if entry["loss"] >= EV_DIFF_THRESHOLD:
+                entry["commentary"] = interactllm._generate_advice(to_json_entry(entry))
 
-        # 一時的に data.json に保存
+        json_entries = [to_json_entry(e) for e in entries]
+
+        # フロント向けJSONを data.json に保存（従来どおり）
         with open("data.json", "w", encoding="utf-8") as f:
-            json.dump(result_data, f, ensure_ascii=False, indent=4)
+            json.dump(json_entries, f, ensure_ascii=False, indent=2)
 
-        # data.json を読み込む
-        with open("data.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        # 赤ドラ対応 of conversion
-        data["tehai_data"] = [convert_tile_detail(t) for t in data["tehai"]]
-        
-        player_res = convert_tile_detail(data["player_discard"])
-        data["player_discard"] = player_res["emoji"]
-        data["player_is_red"] = player_res["is_red"]
-
-        ai_res = convert_tile_detail(data["ai_discard"])
-        data["ai_discard"] = ai_res["emoji"]
-        data["ai_is_red"] = ai_res["is_red"]
-
-        # 不要になった元キーを削除（混同防止）
-        del data["tehai"]
-
-        return data
+        return {"entries": json_entries, **build_view(entries, json_entries)}
 
     finally:
         remove_file(html_path)
         remove_file(temp_html_path)
+
