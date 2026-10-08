@@ -56,3 +56,32 @@ python app.py
 - **リクエストボディ**:
   - `file` (Multipart/form-data, source_type=file時)
   - JSONデータ (raw body, source_type=json時)
+
+### `POST /api/v1/analyze`
+
+牌譜解析結果をJSON配列で返却します。`kyokus`には局名（例: `East 1`）または
+HTML内の局ID（例: `kyoku-0-0`）を複数指定できます。省略時は全局を返します。
+
+```json
+{
+  "seat": 2,
+  "source": {
+    "type": "url",
+    "data": "https://tenhou.net/0/?log=..."
+  },
+  "kyokus": ["kyoku-0-0", "kyoku-1-0"]
+}
+```
+
+レスポンスの各判断には、次の情報が含まれます。
+
+- `decision_id`, `kyoku`, `kyoku_id`, `turn`, `wall_remaining`
+- `dora_indicator`, `dora_indicators`, `scores`
+- `hand`, `draw`, `melds`
+- `rivers`（`self`, `shimocha`, `toimen`, `kamicha`）
+- `riichi`（東家・南家・西家・北家の順）
+- `player_discard`, `player_ev`, `player_deal_in`
+- `ai_discard`, `ai_ev`, `ai_deal_in`, `loss`, `commentary`
+
+`player_deal_in`と`ai_deal_in`の単位はパーセントです。カンがある場合に備え、
+ドラ表示牌は単数の`dora_indicator`に加えて`dora_indicators`でも返します。
