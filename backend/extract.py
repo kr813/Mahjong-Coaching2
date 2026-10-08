@@ -5,6 +5,8 @@ from typing import Any
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
+import tenhou_state
+
 # mjai-reviewer のレポートHTMLから、自分の全判断（打牌・鳴き・立直など）を抽出する。
 # Mortal（日本語表記: プレイヤー: / N巡目）と Akochan（英語表記: Player: / Turn N）の両方に対応する。
 
@@ -136,6 +138,15 @@ def get_turn(entry: Tag) -> int:
     return int(m.group(1)) if m else 0
 
 
+def get_wall_remaining(entry: Tag) -> int | None:
+    summary = entry.find("summary")
+    text = summary.get_text(" ", strip=True) if summary else ""
+    match = re.search(r"[×x]\s*(\d+)", text, re.IGNORECASE)
+    if match is None:
+        match = re.search(r"(?:remaining|残り)\s*(\d+)", text, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 # --- 1判断分の解析 ---
 def parse_entry(entry: Tag) -> dict[str, Any] | None:
     player_parts: list[dict[str, str]] | None = None
@@ -175,7 +186,9 @@ def parse_entry(entry: Tag) -> dict[str, Any] | None:
     ai_label = action_label(ai_parts)
 
     player_ev: float | None = None
+    player_deal_in: float | None = None
     ai_ev: float | None = None
+    ai_deal_in: float | None = None
     for row in rows:
         tds = _row_cells(row)
         if len(tds) < 2:
@@ -183,27 +196,34 @@ def parse_entry(entry: Tag) -> dict[str, Any] | None:
         row_label = action_label(action_parts(_own_children(tds[0])))
         if player_ev is None and row_label == player_label:
             player_ev = _parse_ev(tds[1])
+            player_deal_in = _parse_ev(tds[2]) if len(tds) >= 3 else None
         if ai_ev is None and row_label == ai_label:
             ai_ev = _parse_ev(tds[1])
+            ai_deal_in = _parse_ev(tds[2]) if len(tds) >= 3 else None
 
     if ai_ev is None:
         first_tds = _row_cells(rows[0])
         ai_ev = _parse_ev(first_tds[1]) if len(first_tds) >= 2 else 0.0
         ai_ev = ai_ev or 0.0
+        ai_deal_in = _parse_ev(first_tds[2]) if len(first_tds) >= 3 else None
     if player_ev is None:
         # 候補表にプレイヤーの選択が無い場合は差なしとして扱う（従来の挙動）
         player_ev = ai_ev
+        player_deal_in = ai_deal_in
 
     return {
         "turn": get_turn(entry),
+        "wall_remaining": get_wall_remaining(entry),
         **extract_hand(entry),
         "player_discard": player_label,
         "player_parts": player_parts,
         "player_ev": player_ev,
+        "player_deal_in": player_deal_in,
         "ai_name": ai_name,
         "ai_discard": ai_label,
         "ai_parts": ai_parts,
         "ai_ev": ai_ev,
+        "ai_deal_in": ai_deal_in,
         "loss": ai_ev - player_ev,
     }
 
@@ -218,17 +238,67 @@ def _load_soup(html_path: str) -> BeautifulSoup:
     raise Exception("どのエンコーディングでもファイルを読み込めませんでした。")
 
 
-def extract_entries(html_path: str) -> list[dict[str, Any]]:
+def get_player_id(soup: BeautifulSoup) -> int | None:
+    metadata_text = " ".join(soup.stripped_strings)
+    match = re.search(r"(?:player[ _]?id|プレイヤー\s*id)\s*[:：]?\s*([0-3])", metadata_text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+
+    for dt in soup.find_all("dt"):
+        label = dt.get_text(" ", strip=True).lower()
+        if label not in {"player id", "player_id", "プレイヤーid", "プレイヤー id"}:
+            continue
+        # reviewer HTML omits some closing tags, so html.parser may nest the
+        # following dd instead of treating it as a sibling.
+        dd = dt.find_next("dd")
+        if dd is None:
+            continue
+        try:
+            player_id = int(dd.get_text(strip=True))
+        except ValueError:
+            continue
+        if 0 <= player_id <= 3:
+            return player_id
+    return None
+
+
+def _empty_state() -> dict[str, Any]:
+    return {
+        "state_available": False,
+        "dora_indicators": [],
+        "scores": [],
+        "melds": [],
+        "rivers": {"self": [], "shimocha": [], "toimen": [], "kamicha": []},
+        "riichi": [],
+    }
+
+
+def extract_entries(html_path: str, seat: int | None = None) -> list[dict[str, Any]]:
     """レポート内の全判断を出現順に返す。値は丸めていない生の値。"""
     soup = _load_soup(html_path)
+    viewer = seat if seat is not None else get_player_id(soup)
     entries: list[dict[str, Any]] = []
     for section in soup.find_all("section"):
         kyoku, kyoku_id, end_status = get_kyoku_info(section)
+        section_entries: list[dict[str, Any]] = []
         for entry in section.find_all("details", class_="entry"):
             data = parse_entry(entry)
             if data is None:
                 continue
-            entries.append({"kyoku": kyoku, "kyoku_id": kyoku_id, "end_status": end_status, **data})
+            decision_id = f"{kyoku_id or 'kyoku'}-{len(section_entries):03d}"
+            section_entries.append(
+                {
+                    "decision_id": decision_id,
+                    "kyoku": kyoku,
+                    "kyoku_id": kyoku_id,
+                    "end_status": end_status,
+                    **_empty_state(),
+                    **data,
+                }
+            )
+        if viewer is not None:
+            tenhou_state.attach_round_states(section_entries, section, viewer)
+        entries.extend(section_entries)
     return entries
 
 

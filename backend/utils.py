@@ -1,6 +1,7 @@
 from __future__ import annotations
+
+import logging
 import tempfile
-import json
 from pathlib import Path
 from typing import Any
 
@@ -10,11 +11,12 @@ import interactllm
 
 # この値以上の期待値差がある判断だけを「要注意」とし、LLMのコメントを付ける
 EV_DIFF_THRESHOLD = 0.15
+LOGGER = logging.getLogger(__name__)
 
 def write_temp_file(suffix: str, content: bytes) -> Path:
-    temp_file = Path(tempfile.NamedTemporaryFile(suffix=suffix, delete=False).name)
-    temp_file.write_bytes(content)
-    return temp_file
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+        handle.write(content)
+        return Path(handle.name)
 
 
 def remove_file(path: Path | None) -> None:
@@ -27,15 +29,30 @@ def remove_file(path: Path | None) -> None:
 
 
 def to_json_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    """抽出結果をフロント向けJSONの1件分にする（期待値は小数2桁）。"""
+    """抽出結果をフロント向けJSONの1件分にする（数値は小数2桁）。"""
+    dora_indicators = entry.get("dora_indicators", [])
     return {
+        "decision_id": entry["decision_id"],
         "kyoku": entry["kyoku"],
+        "kyoku_id": entry["kyoku_id"],
         "turn": entry["turn"],
+        "state_available": entry.get("state_available", False),
+        "wall_remaining": entry.get("wall_remaining"),
+        "dora_indicator": dora_indicators[0] if dora_indicators else None,
+        "dora_indicators": dora_indicators,
+        "scores": entry.get("scores", []),
+        "hand": entry["hand"],
+        "draw": entry["tsumo"],
+        "melds": entry.get("melds", []),
+        "rivers": entry.get("rivers", {}),
+        "riichi": entry.get("riichi", []),
         "tehai": entry["tehai"],
         "player_discard": entry["player_discard"],
         "player_ev": round(entry["player_ev"], 2),
+        "player_deal_in": round(entry["player_deal_in"], 2) if entry.get("player_deal_in") is not None else None,
         "ai_discard": entry["ai_discard"],
         "ai_ev": round(entry["ai_ev"], 2),
+        "ai_deal_in": round(entry["ai_deal_in"], 2) if entry.get("ai_deal_in") is not None else None,
         "loss": round(entry["loss"], 2),
         "commentary": entry.get("commentary"),
     }
@@ -85,7 +102,8 @@ def run_analysis(
     seat: int,
     url: str | None = None,
     file_content: bytes | None = None,
-    json_body: bytes | None = None
+    json_body: bytes | None = None,
+    kyokus: list[str] | None = None,
 ) -> dict[str, Any]:
     html_path = None
     temp_html_path = None
@@ -108,21 +126,35 @@ def run_analysis(
             raise ValueError("source_type must be one of json, file, url")
 
         temp_html_path = write_temp_file(".html", report_html.encode("utf-8"))
-        entries = extract.extract_entries(str(temp_html_path))
+        entries = extract.extract_entries(str(temp_html_path), seat=seat)
         if not entries:
             raise ValueError("No analysable report entries were found.")
+
+        if kyokus:
+            requested = list(dict.fromkeys(kyokus))
+            available = {entry["kyoku"] for entry in entries} | {entry["kyoku_id"] for entry in entries}
+            missing = [kyoku for kyoku in requested if kyoku not in available]
+            if missing:
+                raise ValueError(f"Requested kyoku was not found: {', '.join(missing)}")
+            order = {kyoku: index for index, kyoku in enumerate(requested)}
+            entries = [
+                entry
+                for entry in entries
+                if entry["kyoku"] in order or entry["kyoku_id"] in order
+            ]
+            entries.sort(key=lambda entry: order.get(entry["kyoku_id"], order.get(entry["kyoku"], len(order))))
 
         # 期待値差がしきい値以上の判断にだけ、OCIのLLMでアドバイスを付ける
         for entry in entries:
             entry["commentary"] = None
             if entry["loss"] >= EV_DIFF_THRESHOLD:
-                entry["commentary"] = interactllm._generate_advice(to_json_entry(entry))
+                try:
+                    entry["commentary"] = interactllm._generate_advice(to_json_entry(entry))
+                except Exception:
+                    # 解析データは返却し、外部LLMの一時障害だけを局所化する。
+                    LOGGER.exception("Failed to generate commentary for %s", entry["decision_id"])
 
         json_entries = [to_json_entry(e) for e in entries]
-
-        # フロント向けJSONを data.json に保存（従来どおり）
-        with open("data.json", "w", encoding="utf-8") as f:
-            json.dump(json_entries, f, ensure_ascii=False, indent=2)
 
         return {"entries": json_entries, **build_view(entries, json_entries)}
 

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
 
-from flask import Flask, Response, jsonify, request, render_template, abort
+from flask import Flask, Response, abort, jsonify, render_template, request
 
 import utils
 
 app = Flask(__name__)
+
+
+def _api_error(message: str, status: int = 400) -> tuple[Response, int]:
+    return jsonify(error=message), status
 
 
 @app.route("/analyze", methods=["GET", "POST"])
@@ -32,7 +37,7 @@ def analyze() -> str | Response | tuple[str, int]:
             source_type = "url"
         elif input_data:
             # input_data がURL風なら "url"、そうでなければ "json" テキストとみなす
-            if input_data.startswith("http://") or input_data.startswith("https://"):
+            if input_data.startswith(("http://", "https://")):
                 source_type = "url"
             else:
                 source_type = "json"
@@ -84,6 +89,66 @@ def analyze() -> str | Response | tuple[str, int]:
             error_title="解析エンジンエラー",
             error_message=str(e)
         ), 500
+
+
+@app.route("/api/v1/analyze", methods=["POST"])
+def analyze_api() -> Response | tuple[Response, int]:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _api_error("JSON object body is required")
+
+    try:
+        seat = int(payload.get("seat", 0))
+    except (TypeError, ValueError):
+        return _api_error("seat must be 0, 1, 2, or 3")
+    if seat not in {0, 1, 2, 3}:
+        return _api_error("seat must be 0, 1, 2, or 3")
+
+    source = payload.get("source")
+    if not isinstance(source, dict):
+        return _api_error("source must be an object")
+    source_type = str(source.get("type", "")).strip().lower()
+    source_data = source.get("data")
+    if source_type not in {"url", "json"}:
+        return _api_error("source.type must be url or json")
+
+    kyokus_value = payload.get("kyokus")
+    kyokus: list[str] | None = None
+    if kyokus_value is not None:
+        if not isinstance(kyokus_value, list) or not kyokus_value:
+            return _api_error("kyokus must be a non-empty array when specified")
+        if not all(isinstance(value, str) and value.strip() for value in kyokus_value):
+            return _api_error("each kyokus item must be a non-empty string")
+        kyokus = [value.strip() for value in kyokus_value]
+
+    url = None
+    json_body = None
+    if source_type == "url":
+        if not isinstance(source_data, str) or not source_data.strip():
+            return _api_error("source.data must contain a URL")
+        url = source_data.strip()
+    else:
+        if source_data is None:
+            return _api_error("source.data must contain replay JSON")
+        if isinstance(source_data, str):
+            json_body = source_data.encode("utf-8")
+        else:
+            json_body = json.dumps(source_data, ensure_ascii=False).encode("utf-8")
+
+    try:
+        data = utils.run_analysis(
+            source_type=source_type,
+            seat=seat,
+            url=url,
+            json_body=json_body,
+            kyokus=kyokus,
+        )
+        return jsonify(data["entries"])
+    except ValueError as error:
+        return _api_error(str(error))
+    except Exception:
+        app.logger.exception("analysis API failed")
+        return _api_error("analysis failed", 500)
 
 @app.route("/", methods=["GET"])
 def index() -> str:
