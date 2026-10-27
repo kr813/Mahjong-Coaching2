@@ -10,13 +10,14 @@
 flowchart TD
     subgraph ClientLayer [クライアント層]
         direction LR
-        FE["フロントエンド Web UI"]
+        FE["フロントエンド Web UI (index.html / result_manyhands.html)"]
         CLI["外部 API クライアント"]
     end
 
     subgraph BackendLayer [バックエンド Flask API]
-        App["app.py (ルーティング)"]
+        App["app.py (ルーティング・レスポンス出し分け)"]
         Utils["utils.py (パイプライン制御)"]
+        BRep["build_report.py (画面用ビュー構築)"]
         
         subgraph SubModules [内部処理モジュール]
             direction LR
@@ -45,6 +46,10 @@ flowchart TD
 
     Utils -->|アドバイス生成| LLM
     LLM -->|OCI SDK| OCI
+
+    Utils -->|局面データ配列| App
+    App -->|HTML描画時| BRep
+    BRep -->|レポートデータ| App
 ```
 
 ---
@@ -259,13 +264,54 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 
 ---
 
-### 4.7 `test_app.py` — 単体テストスイート
+### 4.7 `build_report.py` — 画面用ビューモデル生成モジュール
+
+`Mahjong-Coaching_FrontEnd` v2 の仕様に完全準拠し、バックエンドが生成した局面 JSON 配列（`records`）をブラウザ向けテンプレート（`result_manyhands.html`）に渡すビューモデル辞書へ変換します。
+
+#### 主要機能
+1. **`build_report(records)`**:
+   - 局情報（`meta.kyoku`, `meta.honba`）から局ごとのブロック（`kyokus`）およびアンカー ID を生成。
+   - 各局面のメタデータ集計（局数、局面数、AI一致率、注意局面数）を算出し、サマリー欄を構築。
+2. **`rivers_view(rec)`**:
+   - 自家および他家（下家・対面・上家）の河情報を表示用に成形（1行6枚単位で分割）。
+   - 立直宣言牌（`riichi`）、ツモ切り（`tsumogiri`）、他家に鳴かれた牌（`called_by`）のフラグおよびツールチップ説明文（`note`）を付与。
+3. **`meld_view(meld)`**:
+   - 副露牌の並び順と横向き（`rotated`）位置を、鳴き元の相対席（`上家`/`対面`/`下家`）に応じて正確に配置。
+   - 加槓（`kakan`）時にポン牌の上に4枚目を重ねて表示する構造（`added`）に対応。
+4. **`entry_view(rec, threshold)`**:
+   - きっかけ牌（ツモ牌、または他家の打牌）を手牌末尾に分離して配置。
+   - 期待値差（`loss`）の絶対値が閾値（`0.15`）以上の場合に `is_warning=True`（⚠️ 表示およびアコーディオン自動展開）を設定。
+5. **牌コード検証 (`VALID_TILES`)**:
+   - `1m`〜`9m`, `1p`〜`9p`, `1s`〜`9s`, 赤ドラ（`5mr`, `5pr`, `5sr`）, 字牌（`e`, `s`, `w`, `n`, `p`, `f`, `c`）の有効性を網羅。
+
+---
+
+### 4.8 `templates/` — フロントエンド v2 テンプレート群
+
+フロントエンドリポジトリ（`Mahjong-Coaching_FrontEnd/apps/v2/templates`）と完全同期した HTML テンプレート群です。
+
+- **`index.html`**:
+  - URL入力、JSONテキスト直接貼り付け、および `.json` ファイルアップロードに対応したモダンな入力フォーム。
+  - 自家席選択（0: 東家、1: 南家、2: 西家、3: 北家）プルダウンを装備。
+  - クライアント側バリデーション（空送信防止）およびエラーメッセージ表示を内蔵。
+- **`result_manyhands.html`**:
+  - 全局・全局面のアコーディオン形式レポート表示画面。
+  - 4家の河表示（立直宣言牌の回転、ツモ切り青下線、鳴かれ牌の透過表示）、手牌・副露の完全再現。
+  - 損失期待値（`loss`）の大きい局面への警告表示（⚠️ マーク、背景色ハイライト）および AI による詳細コーチングアドバイス表示枠。
+- **`error.html`**:
+  - 400（不正なリクエスト）、404（ページ見つかりません）、500（サーバー・解析エンジンエラー）を共通で美しく表示する統一エラー画面。
+
+---
+
+### 4.9 `test_app.py` — 単体テストスイート
 
 `unittest` をベースにした自動テストモジュール。モックを使用して Akochan / OCI の実環境に依存せずに高速にテスト可能です。
 
 - `test_invalid_seat`: 不正な席番号（例: `seat=5`）に対して HTTP 400 が返ることを検証。
 - `test_empty_request`: 入力データが空の場合に HTTP 400 が返ることを検証。
-- `test_successful_analysis_json_format`: 実サンプル HTML レポート（`test_report.html`）を入力とし、`POST /analyze` が 200 OK で新仕様の全フィールド（`meta`, `situation`, `self`, `others`, `hidden_info`, `decision`, `commentary`）を含む JSON 配列を返すことを検証。
+- `test_index_page`: ルート (`/`) への GET リクエストで入力フォーム画面（`index.html`）が正常に返ることを検証。
+- `test_successful_analysis_json_format`: 実サンプル HTML レポート（`test_report.html`）を入力とし、`POST /api/analyze` が 200 OK で新仕様の全フィールド（`meta`, `situation`, `self`, `others`, `hidden_info`, `decision`, `commentary`）を含む JSON 配列を返すことを検証。
+- `test_successful_analysis_html_format`: ブラウザアクセス時（`Accept: text/html`）に `POST /analyze` が 200 OK で新仕様レポート画面（`result_manyhands.html`）を正常にレンダリングすることを検証。
 
 ---
 
