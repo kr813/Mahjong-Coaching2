@@ -3,10 +3,10 @@ import subprocess
 from pathlib import Path
 import markdown
 
-backend_dir = Path(__file__).resolve().parent
-md_path = backend_dir / "code_detail.md"
-html_path = backend_dir / "code_detail.html"
-pdf_path = backend_dir / "code_detail.pdf"
+docs_dir = Path(__file__).resolve().parent
+md_path = docs_dir / "code_detail.md"
+html_path = docs_dir / "code_detail.html"
+pdf_path = docs_dir / "code_detail.pdf"
 
 md_text = md_path.read_text(encoding="utf-8")
 
@@ -23,13 +23,12 @@ html_body = markdown.markdown(
     extensions=["tables", "fenced_code", "toc", "attr_list", "def_list"]
 )
 
-# リッチな印刷用CSSとMermaid読み込みを含む完全なHTMLテンプレート
 full_html = f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <title>Mahjong-Coaching2 バックエンド 詳細仕様書</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
 <script>
     mermaid.initialize({{
         startOnLoad: true,
@@ -180,7 +179,6 @@ full_html = f"""<!DOCTYPE html>
 html_path.write_text(full_html, encoding="utf-8")
 print(f"Generated HTML: {html_path}")
 
-# Chrome / Edge を探す
 browser_candidates = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -190,12 +188,8 @@ browser_exe = next((p for p in browser_candidates if Path(p).exists()), None)
 if not browser_exe:
     raise RuntimeError("Neither Chrome nor Edge was found.")
 
-print(f"Using browser: {browser_exe}")
-
-# HTML file:// URL
 file_url = html_path.as_uri()
 
-# PDF 出力コマンド
 cmd = [
     browser_exe,
     "--headless",

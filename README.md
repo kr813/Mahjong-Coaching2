@@ -8,6 +8,11 @@ AI (Akochan / mjai-reviewer) の麻雀牌譜解析結果から卓状況（河・
 
 ## プロジェクト構成
 
+- **`docs/`**: 詳細仕様書・ドキュメント
+  - **`code_detail.md`**: 詳細仕様書（Markdown 版）
+  - **`code_detail.pdf`**: 詳細仕様書（PDF 版）
+  - **`code_detail.html`**: 仕様書 HTML プレビュー
+  - **`generate_pdf.py`**: 仕様書 PDF 自動生成スクリプト
 - **`backend/`**: Flask サーバーおよび解析処理スクリプト
   - **`app.py`**: アプリケーションのメインエントリーポイント（Flask）
   - **`utils.py`**: 解析実行およびデータ統合のオーケストレーション

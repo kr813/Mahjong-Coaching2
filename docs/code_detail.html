@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Mahjong-Coaching2 バックエンド 詳細仕様書</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
 <script>
     mermaid.initialize({
         startOnLoad: true,
@@ -152,42 +152,42 @@
 <p>フロントエンド（<code>Mahjong-Coaching_FrontEnd</code> v2）の入力仕様（<code>ai-input-format</code>）に完全準拠しており、フロントエンドおよび外部クライアントへの高精度な検討データ提供を行います。</p>
 <div class="mermaid">
 graph LR
-    subgraph "クライアント"
-        FE["フロントエンド Web UI<br/>(Mahjong-Coaching_FrontEnd v2)"]
-        CLI["CLI / 外部 API クライアント"]
+    subgraph Client [クライアント]
+        FE[フロントエンド Web UI]
+        CLI[外部 API クライアント]
     end
 
-    subgraph "バックエンド Flask API (:8080)"
-        App["app.py<br/>ルーティング / バリデーション"]
-        Utils["utils.py<br/>パイプライン制御"]
-        BAI["build_ai_input.py<br/>局面データ統合"]
-        RTS["reconstruct_table_state.py<br/>卓状況・手牌復元"]
-        IAK["interactakochan.py<br/>Akochan 連携"]
-        LLM["interactllm.py<br/>OCI GenAI 連携"]
+    subgraph Backend [バックエンド Flask API]
+        App[app.py ルーティング]
+        Utils[utils.py パイプライン制御]
+        BAI[build_ai_input.py 局面統合]
+        RTS[reconstruct_table_state.py 卓状況復元]
+        IAK[interactakochan.py Akochan連携]
+        LLM[interactllm.py OCI GenAI連携]
     end
 
-    subgraph "外部解析・AIサービス"
-        Akochan["mjai-reviewer (:8000)<br/>Akochan 解析エンジン"]
-        OCI["OCI Generative AI Agent<br/>(Oracle Cloud)"]
+    subgraph External [外部サービス]
+        Akochan[mjai-reviewer 解析エンジン]
+        OCI[OCI Generative AI Agent]
     end
 
-    FE -->|"POST /analyze or /api/analyze"| App
-    CLI -->|"POST /analyze (JSON)"| App
+    FE -->|POST /analyze| App
+    CLI -->|POST /analyze| App
     App --> Utils
     Utils --> IAK
-    IAK -->|"curl POST /report"| Akochan
-    Akochan -->>|"HTML レポート"| IAK
-    IAK -->> Utils
+    IAK -->|curl POST /report| Akochan
+    Akochan -->|HTML レポート| IAK
+    IAK --> Utils
     Utils --> BAI
     BAI --> RTS
-    BAI -->>|"全局面データ配列"| Utils
+    BAI -->|全局面データ配列| Utils
     Utils --> LLM
-    LLM -->|"OCI SDK (Chat API)"| OCI
-    OCI -->>|"コーチングアドバイス"| LLM
-    LLM -->> Utils
-    Utils -->> App
-    App -->>|"JSON (ai-input-format)"| FE
-    App -->>|"JSON"| CLI
+    LLM -->|OCI SDK| OCI
+    OCI -->|アドバイス| LLM
+    LLM --> Utils
+    Utils --> App
+    App -->|JSON| FE
+    App -->|JSON| CLI
 </div>
 
 <hr />
@@ -195,6 +195,11 @@ graph LR
 <pre><code>Mahjong-Coaching2/
 ├── .gitignore                      # Git 除外設定（__pycache__, data.json など）
 ├── README.md                       # プロジェクト概要および起動手順書
+├── docs/                           # 仕様書ドキュメント格納フォルダ
+│   ├── code_detail.md              # 本詳細仕様書（Markdown 版）
+│   ├── code_detail.pdf             # 本詳細仕様書（PDF 版）
+│   ├── code_detail.html            # 仕様書 HTML プレビュー
+│   └── generate_pdf.py             # PDF 自動生成スクリプト
 └── backend/
     ├── app.py                      # Flask アプリケーション本体（API ルーティング）
     ├── utils.py                    # 処理オーケストレーション（解析・LLM 付与）
@@ -205,8 +210,6 @@ graph LR
     ├── prompt.txt                  # AI コーチ向けプロンプトテンプレート
     ├── requirements.txt            # Python 依存パッケージ定義
     ├── test_app.py                 # 単体テスト・スキーマ検証スクリプト
-    ├── code_detail.md              # 本詳細仕様書（Markdown 版）
-    ├── code_detail.pdf             # 本詳細仕様書（PDF 版）
     ├── source/                     # サンプル・テスト用ファイル
     │   ├── replay.json             # テスト用牌譜 JSON
     │   ├── test.json               # テスト用 JSON
@@ -221,51 +224,39 @@ graph LR
 <div class="mermaid">
 sequenceDiagram
     autonumber
-    actor Client as クライアント (FrontEnd / API)
-    participant App as app.py (Flask)
+    actor Client as クライアント
+    participant App as app.py
     participant Utils as utils.py
     participant IAK as interactakochan.py
-    participant Ako as mjai-reviewer (:8000)
+    participant Ako as mjai-reviewer
     participant BAI as build_ai_input.py
     participant RTS as reconstruct_table_state.py
     participant LLM as interactllm.py
     participant OCI as OCI GenAI Agent
 
-    Client->>App: POST /analyze (seat, source_type, input_data/url/file)
-    Note over App: パラメータ検証 & ソース自動判定
-    App->>Utils: run_analysis(source_type, seat, url, file_content, json_body)
-    Utils->>IAK: call_report(source_type, ...)
-    IAK->>Ako: curl POST /report?seat=N
-    Ako-->>IAK: HTML レポート (候補手表 + 埋め込み天鳳JSON)
+    Client->>App: POST /analyze
+    App->>Utils: run_analysis
+    Utils->>IAK: call_report
+    IAK->>Ako: curl POST /report
+    Ako-->>IAK: HTML レポート
     IAK-->>Utils: HTML レポート文字列
-    Utils->>BAI: build(report_html, viewer=seat)
-
-    rect rgb(240, 248, 255)
-        Note over BAI, RTS: 卓状況の復元と評価値照合
-        BAI->>RTS: load_kyoku_logs() & simulate()
-        RTS-->>BAI: 各局面のスナップショット (河・副露・他家手牌)
-        BAI->>BAI: HTML の details.entry (評価値表) とスナップショットを照合
-        BAI->>BAI: 全候補手をパース・構造化
-    end
-
-    BAI-->>Utils: 全局面オブジェクト配列 (list[dict])
-
-    rect rgb(255, 250, 240)
-        Note over Utils, OCI: 悪手判定と AI アドバイス生成
-        loop 各局面 rec in records
-            opt loss >= 0.15 (注意局面)
-                Utils->>LLM: _generate_advice(rec)
-                LLM->>OCI: create_session() & chat(prompt)
-                OCI-->>LLM: コーチングアドバイス文
-                LLM-->>Utils: アドバイス文字列
-                Utils->>Utils: rec["commentary"] = アドバイス
-            end
+    Utils->>BAI: build
+    BAI->>RTS: load_kyoku_logs and simulate
+    RTS-->>BAI: 局面スナップショット
+    BAI->>BAI: 候補手構造化
+    BAI-->>Utils: 全局面データ配列
+    loop 各局面
+        opt 期待値差が0.15以上
+            Utils->>LLM: _generate_advice
+            LLM->>OCI: create_session and chat
+            OCI-->>LLM: コーチングアドバイス
+            LLM-->>Utils: アドバイス文
+            Utils->>Utils: commentary 付与
         end
     end
-
-    Utils->>Utils: data.json に結果を保存 (デバッグ用)
+    Utils->>Utils: data.json 保存
     Utils-->>App: records 配列
-    App-->>Client: 200 OK application/json (ai-input-format)
+    App-->>Client: 200 OK application/json
 </div>
 
 <hr />
