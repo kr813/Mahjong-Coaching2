@@ -78,7 +78,6 @@ Mahjong-Coaching2/
     └── templates/                  # ブラウザ直接アクセス用テンプレート
         ├── index.html              # 入力フォーム画面（Mahjong-Coaching_FrontEnd v2）
         ├── result_manyhands.html   # 新仕様対応 牌譜検討結果画面（他家の河・副露・AI助言対応）
-        ├── result.html             # 解析結果画面（互換エイリアス）
         └── error.html              # エラー表示画面（400 / 404 / 500対応）
 ```
 
@@ -155,9 +154,8 @@ HTTP リクエストのハンドリング、パラメータ抽出・バリデー
      5. リクエストが JSON (`request.is_json`) → `"json"`
      6. いずれも該当しない場合 → `400 Bad Request`
 3. **`format`（レスポンス形式）**:
-   - デフォルトは `"json"`。
-   - `format=html` が指定された場合のみ、ブラウザ向けに `render_template("result.html")` をレンダリング。
-   - それ以外はすべて `jsonify(records)`（`Content-Type: application/json`）を返却。
+   - `format=html` またはブラウザ通常アクセス（`Accept: text/html`）の場合、[result_manyhands.html](file:///c:/Users/champ/ぶんかかい/Mahjong-Coaching2/backend/templates/result_manyhands.html) をレンダリング。
+   - API リクエスト（`/api/analyze` または `Accept: application/json`、`format=json`）の場合は新仕様の局面 JSON 配列（`application/json`）を返却。
 
 ---
 

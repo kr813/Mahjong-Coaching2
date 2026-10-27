@@ -316,7 +316,7 @@ def entry_view(rec: dict[str, Any], threshold: float) -> dict[str, Any]:
 
 
 def build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """画面 (result_manyhands.html / result.html) に渡すJSON全体を作る"""
+    """画面 (result_manyhands.html) に渡すJSON全体を作る"""
     kyokus: dict[str, dict[str, Any]] = {}
     for rec in records:
         title = kyoku_title(rec["meta"])

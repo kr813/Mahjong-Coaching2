@@ -256,7 +256,6 @@ flowchart TD
     └── templates/                  # ブラウザ直接アクセス用テンプレート
         ├── index.html              # 入力フォーム画面（Mahjong-Coaching_FrontEnd v2）
         ├── result_manyhands.html   # 新仕様対応 牌譜検討結果画面（他家の河・副露・AI助言対応）
-        ├── result.html             # 解析結果画面（互換エイリアス）
         └── error.html              # エラー表示画面（400 / 404 / 500対応）
 </code></pre>
 <hr />
@@ -356,9 +355,8 @@ sequenceDiagram
 </ol>
 </li>
 <li><strong><code>format</code>（レスポンス形式）</strong>:</li>
-<li>デフォルトは <code>"json"</code>。</li>
-<li><code>format=html</code> が指定された場合のみ、ブラウザ向けに <code>render_template("result.html")</code> をレンダリング。</li>
-<li>それ以外はすべて <code>jsonify(records)</code>（<code>Content-Type: application/json</code>）を返却。</li>
+<li><code>format=html</code> またはブラウザ通常アクセス（<code>Accept: text/html</code>）の場合、<a href="file:///c:/Users/champ/ぶんかかい/Mahjong-Coaching2/backend/templates/result_manyhands.html">result_manyhands.html</a> をレンダリング。</li>
+<li>API リクエスト（<code>/api/analyze</code> または <code>Accept: application/json</code>、<code>format=json</code>）の場合は新仕様の局面 JSON 配列（<code>application/json</code>）を返却。</li>
 </ol>
 <hr />
 <h3 id="42-utilspy">4.2 <code>utils.py</code> — 解析オーケストレーション</h3>
