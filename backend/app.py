@@ -7,10 +7,10 @@ from flask import Flask, Response, jsonify, request, render_template, abort
 import utils
 
 app = Flask(__name__)
+app.config["JSON_AS_ASCII"] = False
 
 
-@app.route("/analyze", methods=["GET", "POST"])
-def analyze() -> str | Response | tuple[str, int]:
+def _execute_analysis():
     # seat: フォーム (request.form) → クエリパラメータ (request.args) の順で取得
     seat = (request.form.get("seat") or request.args.get("seat") or "0").strip()
     if seat not in {"0", "1", "2", "3"}:
@@ -66,24 +66,42 @@ def analyze() -> str | Response | tuple[str, int]:
         if not json_body:
             return jsonify(error="JSON データが空です"), 400
 
+    format_type = (request.args.get("format") or request.form.get("format") or "json").strip().lower()
+
     try:
-        data = utils.run_analysis(
+        records = utils.run_analysis(
             source_type=source_type,
             seat=int(seat),
             url=url,
             file_content=file_content,
             json_body=json_body
         )
-        return render_template("result.html", **data)
+
+        if format_type == "html":
+            return render_template("result.html", records=records)
+
+        return jsonify(records)
     except ValueError as e:
         return jsonify(error=str(e)), 400
     except Exception as e:
-        return render_template(
-            "error.html",
-            error_code="500",
-            error_title="解析エンジンエラー",
-            error_message=str(e)
-        ), 500
+        if format_type == "html":
+            return render_template(
+                "error.html",
+                error_code="500",
+                error_title="解析エンジンエラー",
+                error_message=str(e)
+            ), 500
+        return jsonify(error=str(e)), 500
+
+
+@app.route("/analyze", methods=["GET", "POST"])
+def analyze() -> str | Response | tuple[str, int]:
+    return _execute_analysis()
+
+
+@app.route("/api/analyze", methods=["GET", "POST"])
+def api_analyze() -> str | Response | tuple[str, int]:
+    return _execute_analysis()
 
 @app.route("/", methods=["GET"])
 def index() -> str:
