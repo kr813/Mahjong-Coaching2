@@ -7,43 +7,44 @@
 フロントエンド（`Mahjong-Coaching_FrontEnd` v2）の入力仕様（`ai-input-format`）に完全準拠しており、フロントエンドおよび外部クライアントへの高精度な検討データ提供を行います。
 
 ```mermaid
-graph LR
-    subgraph Client [クライアント]
-        FE[フロントエンド Web UI]
-        CLI[外部 API クライアント]
+flowchart TD
+    subgraph ClientLayer [クライアント層]
+        direction LR
+        FE["フロントエンド Web UI"]
+        CLI["外部 API クライアント"]
     end
 
-    subgraph Backend [バックエンド Flask API]
-        App[app.py ルーティング]
-        Utils[utils.py パイプライン制御]
-        BAI[build_ai_input.py 局面統合]
-        RTS[reconstruct_table_state.py 卓状況復元]
-        IAK[interactakochan.py Akochan連携]
-        LLM[interactllm.py OCI GenAI連携]
+    subgraph BackendLayer [バックエンド Flask API]
+        App["app.py (ルーティング)"]
+        Utils["utils.py (パイプライン制御)"]
+        
+        subgraph SubModules [内部処理モジュール]
+            direction LR
+            IAK["interactakochan.py (解析連携)"]
+            BAI["build_ai_input.py (局面統合)"]
+            RTS["reconstruct_table_state.py (卓復元)"]
+            LLM["interactllm.py (AIコーチ)"]
+        end
     end
 
-    subgraph External [外部サービス]
-        Akochan[mjai-reviewer 解析エンジン]
-        OCI[OCI Generative AI Agent]
+    subgraph ExternalLayer [外部サービス・エンジン]
+        direction LR
+        Akochan["mjai-reviewer (8000ポート)"]
+        OCI["OCI Generative AI Agent"]
     end
 
     FE -->|POST /analyze| App
-    CLI -->|POST /analyze| App
+    CLI -->|POST /api/analyze| App
     App --> Utils
-    Utils --> IAK
-    IAK -->|curl POST /report| Akochan
-    Akochan -->|HTML レポート| IAK
-    IAK --> Utils
-    Utils --> BAI
+
+    Utils -->|牌譜転送| IAK
+    IAK -->|HTTP POST| Akochan
+
+    Utils -->|レポート解析| BAI
     BAI --> RTS
-    BAI -->|全局面データ配列| Utils
-    Utils --> LLM
+
+    Utils -->|アドバイス生成| LLM
     LLM -->|OCI SDK| OCI
-    OCI -->|アドバイス| LLM
-    LLM --> Utils
-    Utils --> App
-    App -->|JSON| FE
-    App -->|JSON| CLI
 ```
 
 ---
@@ -89,12 +90,12 @@ sequenceDiagram
     actor Client as クライアント
     participant App as app.py
     participant Utils as utils.py
-    participant IAK as interactakochan.py
+    participant IAK as interactakochan
     participant Ako as mjai-reviewer
-    participant BAI as build_ai_input.py
-    participant RTS as reconstruct_table_state.py
-    participant LLM as interactllm.py
-    participant OCI as OCI GenAI Agent
+    participant BAI as build_ai_input
+    participant RTS as reconstruct_state
+    participant LLM as interactllm
+    participant OCI as OCI GenAI
 
     Client->>App: POST /analyze
     App->>Utils: run_analysis
@@ -103,14 +104,14 @@ sequenceDiagram
     Ako-->>IAK: HTML レポート
     IAK-->>Utils: HTML レポート文字列
     Utils->>BAI: build
-    BAI->>RTS: load_kyoku_logs and simulate
+    BAI->>RTS: 卓状況シミュレート
     RTS-->>BAI: 局面スナップショット
     BAI->>BAI: 候補手構造化
     BAI-->>Utils: 全局面データ配列
     loop 各局面
-        opt 期待値差が0.15以上
+        opt 期待値差 >= 0.15
             Utils->>LLM: _generate_advice
-            LLM->>OCI: create_session and chat
+            LLM->>OCI: セッション作成 & 質問
             OCI-->>LLM: コーチングアドバイス
             LLM-->>Utils: アドバイス文
             Utils->>Utils: commentary 付与
@@ -118,7 +119,7 @@ sequenceDiagram
     end
     Utils->>Utils: data.json 保存
     Utils-->>App: records 配列
-    App-->>Client: 200 OK application/json
+    App-->>Client: 200 OK (JSON)
 ```
 
 ---

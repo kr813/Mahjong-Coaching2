@@ -33,8 +33,35 @@ full_html = f"""<!DOCTYPE html>
     mermaid.initialize({{
         startOnLoad: true,
         theme: 'neutral',
-        flowchart: {{ useMaxWidth: false, htmlLabels: true }},
-        sequence: {{ useMaxWidth: false, showSequenceNumbers: true }}
+        themeVariables: {{
+            fontSize: '11px',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Meiryo, sans-serif'
+        }},
+        flowchart: {{
+            useMaxWidth: true,
+            htmlLabels: true
+        }},
+        sequence: {{
+            useMaxWidth: true,
+            showSequenceNumbers: true,
+            actorMargin: 15,
+            messageMargin: 12,
+            mirrorActors: false,
+            width: 100
+        }}
+    }});
+
+    window.addEventListener('load', () => {{
+        const adjustSvg = () => {{
+            const svgs = document.querySelectorAll('.mermaid svg');
+            svgs.forEach(svg => {{
+                svg.style.maxWidth = '100%';
+                svg.style.height = 'auto';
+                svg.removeAttribute('height');
+            }});
+        }};
+        setTimeout(adjustSvg, 500);
+        setTimeout(adjustSvg, 1500);
     }});
 </script>
 <style>
@@ -142,7 +169,17 @@ full_html = f"""<!DOCTYPE html>
         background: #fafafa;
         border: 1px solid #e2e8f0;
         border-radius: 6px;
-        padding: 12px;
+        padding: 10px;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        overflow: hidden;
+    }}
+    .mermaid svg {{
+        max-width: 100% !important;
+        height: auto !important;
+        display: block;
+        margin: 0 auto;
     }}
     hr {{
         border: 0;
