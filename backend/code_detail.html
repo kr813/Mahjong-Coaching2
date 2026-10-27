@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Mahjong-Coaching2 バックエンド 詳細仕様書</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+    mermaid.initialize({
+        startOnLoad: true,
+        theme: 'neutral',
+        flowchart: { useMaxWidth: false, htmlLabels: true },
+        sequence: { useMaxWidth: false, showSequenceNumbers: true }
+    });
+</script>
+<style>
+    @page {
+        size: A4;
+        margin: 18mm 15mm 20mm 15mm;
+        @bottom-right {
+            content: counter(page);
+        }
+    }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+        color: #1e293b;
+        line-height: 1.65;
+        font-size: 10.5pt;
+        background: #ffffff;
+        margin: 0;
+        padding: 0;
+    }
+    h1 {
+        font-size: 20pt;
+        color: #0f172a;
+        border-bottom: 3px solid #2563eb;
+        padding-bottom: 8px;
+        margin-top: 0;
+        margin-bottom: 16px;
+    }
+    h2 {
+        font-size: 14pt;
+        color: #1e3a8a;
+        border-bottom: 1.5px solid #cbd5e1;
+        padding-bottom: 5px;
+        margin-top: 24px;
+        margin-bottom: 12px;
+        page-break-after: avoid;
+    }
+    h3 {
+        font-size: 12pt;
+        color: #1e40af;
+        margin-top: 18px;
+        margin-bottom: 8px;
+        page-break-after: avoid;
+    }
+    h4 {
+        font-size: 11pt;
+        color: #334155;
+        margin-top: 14px;
+        margin-bottom: 6px;
+        page-break-after: avoid;
+    }
+    p, li {
+        color: #334155;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 14px 0;
+        font-size: 9.5pt;
+        page-break-inside: avoid;
+    }
+    th, td {
+        border: 1px solid #cbd5e1;
+        padding: 7px 10px;
+        text-align: left;
+    }
+    th {
+        background: #f1f5f9;
+        color: #0f172a;
+        font-weight: 600;
+    }
+    tr:nth-child(even) td {
+        background: #f8fafc;
+    }
+    code {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 9.5pt;
+        background: #f1f5f9;
+        color: #0f172a;
+        padding: 2px 5px;
+        border-radius: 4px;
+        border: 1px solid #e2e8f0;
+    }
+    pre {
+        background: #0f172a;
+        color: #f8fafc;
+        padding: 12px 14px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 9pt;
+        line-height: 1.45;
+        margin: 12px 0;
+        page-break-inside: avoid;
+    }
+    pre code {
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        border: none;
+        font-size: inherit;
+    }
+    .mermaid {
+        margin: 16px auto;
+        text-align: center;
+        page-break-inside: avoid;
+        background: #fafafa;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 12px;
+    }
+    hr {
+        border: 0;
+        height: 1px;
+        background: #e2e8f0;
+        margin: 24px 0;
+    }
+    blockquote {
+        border-left: 4px solid #2563eb;
+        margin: 12px 0;
+        padding: 6px 14px;
+        background: #eff6ff;
+        color: #1e3a8a;
+    }
+    .cover-badge {
+        display: inline-block;
+        background: #2563eb;
+        color: #ffffff;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 9pt;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+</style>
+</head>
+<body>
+<div class="cover-badge">SYSTEM SPECIFICATION</div>
+<h1 id="mahjong-coaching2">Mahjong-Coaching2 バックエンド — 詳細仕様書</h1>
+<h2 id="1">1. プロジェクト概要</h2>
+<p>本プロジェクトは、麻雀AI「Akochan」（<code>mjai-reviewer</code>）の解析エンジンと連携し、ユーザーの麻雀牌譜（天鳳ログURL、JSON、レポートファイル）から<strong>全局・全局面の完全な卓状況（河・副露・手牌・他家手牌・ドラ・点数など）およびAI評価値候補</strong>を復元・抽出し、損失期待値（Loss）の大きい局面に対して <strong>OCI (Oracle Cloud Infrastructure) の Generative AI Agent</strong> によるコーチングアドバイスを付与した構造化 JSON を提供するバックエンド API サーバーです。</p>
+<p>フロントエンド（<code>Mahjong-Coaching_FrontEnd</code> v2）の入力仕様（<code>ai-input-format</code>）に完全準拠しており、フロントエンドおよび外部クライアントへの高精度な検討データ提供を行います。</p>
+<div class="mermaid">
+graph LR
+    subgraph "クライアント"
+        FE["フロントエンド Web UI<br/>(Mahjong-Coaching_FrontEnd v2)"]
+        CLI["CLI / 外部 API クライアント"]
+    end
+
+    subgraph "バックエンド Flask API (:8080)"
+        App["app.py<br/>ルーティング / バリデーション"]
+        Utils["utils.py<br/>パイプライン制御"]
+        BAI["build_ai_input.py<br/>局面データ統合"]
+        RTS["reconstruct_table_state.py<br/>卓状況・手牌復元"]
+        IAK["interactakochan.py<br/>Akochan 連携"]
+        LLM["interactllm.py<br/>OCI GenAI 連携"]
+    end
+
+    subgraph "外部解析・AIサービス"
+        Akochan["mjai-reviewer (:8000)<br/>Akochan 解析エンジン"]
+        OCI["OCI Generative AI Agent<br/>(Oracle Cloud)"]
+    end
+
+    FE -->|"POST /analyze or /api/analyze"| App
+    CLI -->|"POST /analyze (JSON)"| App
+    App --> Utils
+    Utils --> IAK
+    IAK -->|"curl POST /report"| Akochan
+    Akochan -->>|"HTML レポート"| IAK
+    IAK -->> Utils
+    Utils --> BAI
+    BAI --> RTS
+    BAI -->>|"全局面データ配列"| Utils
+    Utils --> LLM
+    LLM -->|"OCI SDK (Chat API)"| OCI
+    OCI -->>|"コーチングアドバイス"| LLM
+    LLM -->> Utils
+    Utils -->> App
+    App -->>|"JSON (ai-input-format)"| FE
+    App -->>|"JSON"| CLI
+</div>
+
+<hr />
+<h2 id="2">2. ディレクトリ・ファイル構成</h2>
+<pre><code>Mahjong-Coaching2/
+├── .gitignore                      # Git 除外設定（__pycache__, data.json など）
+├── README.md                       # プロジェクト概要および起動手順書
+└── backend/
+    ├── app.py                      # Flask アプリケーション本体（API ルーティング）
+    ├── utils.py                    # 処理オーケストレーション（解析・LLM 付与）
+    ├── build_ai_input.py           # レポート HTML から新仕様 JSON への統合モジュール
+    ├── reconstruct_table_state.py  # 天鳳ログから卓状況（河・副露・手牌）の復元モジュール
+    ├── interactakochan.py          # Akochan サーバー連携モジュール（curl 経由）
+    ├── interactllm.py              # OCI Generative AI Agent 連携モジュール
+    ├── prompt.txt                  # AI コーチ向けプロンプトテンプレート
+    ├── requirements.txt            # Python 依存パッケージ定義
+    ├── test_app.py                 # 単体テスト・スキーマ検証スクリプト
+    ├── code_detail.md              # 本詳細仕様書（Markdown 版）
+    ├── code_detail.pdf             # 本詳細仕様書（PDF 版）
+    ├── source/                     # サンプル・テスト用ファイル
+    │   ├── replay.json             # テスト用牌譜 JSON
+    │   ├── test.json               # テスト用 JSON
+    │   └── test_report.html        # テスト用 Akochan レポート HTML
+    └── templates/                  # ブラウザ直接アクセス用テンプレート
+        ├── index.html              # 入力フォーム画面
+        ├── result.html             # 解析結果画面（フォールバック用）
+        └── error.html              # エラー表示画面
+</code></pre>
+<hr />
+<h2 id="3">3. エンドツーエンド処理シーケンス</h2>
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Client as クライアント (FrontEnd / API)
+    participant App as app.py (Flask)
+    participant Utils as utils.py
+    participant IAK as interactakochan.py
+    participant Ako as mjai-reviewer (:8000)
+    participant BAI as build_ai_input.py
+    participant RTS as reconstruct_table_state.py
+    participant LLM as interactllm.py
+    participant OCI as OCI GenAI Agent
+
+    Client->>App: POST /analyze (seat, source_type, input_data/url/file)
+    Note over App: パラメータ検証 & ソース自動判定
+    App->>Utils: run_analysis(source_type, seat, url, file_content, json_body)
+    Utils->>IAK: call_report(source_type, ...)
+    IAK->>Ako: curl POST /report?seat=N
+    Ako-->>IAK: HTML レポート (候補手表 + 埋め込み天鳳JSON)
+    IAK-->>Utils: HTML レポート文字列
+    Utils->>BAI: build(report_html, viewer=seat)
+
+    rect rgb(240, 248, 255)
+        Note over BAI, RTS: 卓状況の復元と評価値照合
+        BAI->>RTS: load_kyoku_logs() & simulate()
+        RTS-->>BAI: 各局面のスナップショット (河・副露・他家手牌)
+        BAI->>BAI: HTML の details.entry (評価値表) とスナップショットを照合
+        BAI->>BAI: 全候補手をパース・構造化
+    end
+
+    BAI-->>Utils: 全局面オブジェクト配列 (list[dict])
+
+    rect rgb(255, 250, 240)
+        Note over Utils, OCI: 悪手判定と AI アドバイス生成
+        loop 各局面 rec in records
+            opt loss >= 0.15 (注意局面)
+                Utils->>LLM: _generate_advice(rec)
+                LLM->>OCI: create_session() & chat(prompt)
+                OCI-->>LLM: コーチングアドバイス文
+                LLM-->>Utils: アドバイス文字列
+                Utils->>Utils: rec["commentary"] = アドバイス
+            end
+        end
+    end
+
+    Utils->>Utils: data.json に結果を保存 (デバッグ用)
+    Utils-->>App: records 配列
+    App-->>Client: 200 OK application/json (ai-input-format)
+</div>
+
+<hr />
+<h2 id="4">4. 各モジュール詳細設計</h2>
+<h3 id="41-apppy-flask-api">4.1 <code>app.py</code> — Flask API エントリーポイント</h3>
+<p>HTTP リクエストのハンドリング、パラメータ抽出・バリデーション、レスポンス形式の制御を行います。</p>
+<h4 id="_1">ルート一覧</h4>
+<table>
+<thead>
+<tr>
+<th>メソッド</th>
+<th>パス</th>
+<th>関数</th>
+<th>概要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/</code></td>
+<td><code>index()</code></td>
+<td>牌譜入力フォーム画面（HTML）を表示</td>
+</tr>
+<tr>
+<td><code>POST</code> / <code>GET</code></td>
+<td><code>/analyze</code></td>
+<td><code>analyze()</code></td>
+<td>牌譜解析メインエンドポイント（JSON / HTML 返却）</td>
+</tr>
+<tr>
+<td><code>POST</code> / <code>GET</code></td>
+<td><code>/api/analyze</code></td>
+<td><code>api_analyze()</code></td>
+<td>API 専用エンドポイント（JSON 返却）</td>
+</tr>
+<tr>
+<td><code>GET</code> / <code>POST</code></td>
+<td><code>/error</code></td>
+<td><code>error()</code></td>
+<td>500 エラーテスト用エンドポイント</td>
+</tr>
+</tbody>
+</table>
+<h4 id="_execute_analysis">パラメータ判定ロジック (<code>_execute_analysis()</code>)</h4>
+<ol>
+<li><strong><code>seat</code>（プレイヤー席番号）</strong>:</li>
+<li><code>request.form</code> → <code>request.args</code> の順で取得（デフォルト: <code>"0"</code>）。</li>
+<li><code>0</code>〜<code>3</code> 以外は即座に <code>400 Bad Request</code>（<code>jsonify(error=...)</code>）を返却。</li>
+<li><strong><code>source_type</code>（データ種別）</strong>:</li>
+<li>明示指定がない場合、以下の優先順位で自動判定：<ol>
+<li>クエリパラメータ <code>url</code> が存在 → <code>"url"</code></li>
+<li><code>input_data</code> が <code>http://</code> または <code>https://</code> で開始 → <code>"url"</code></li>
+<li><code>input_data</code> が入力されている → <code>"json"</code></li>
+<li>リクエストにファイルが添付されている → <code>"file"</code></li>
+<li>リクエストが JSON (<code>request.is_json</code>) → <code>"json"</code></li>
+<li>いずれも該当しない場合 → <code>400 Bad Request</code></li>
+</ol>
+</li>
+<li><strong><code>format</code>（レスポンス形式）</strong>:</li>
+<li>デフォルトは <code>"json"</code>。</li>
+<li><code>format=html</code> が指定された場合のみ、ブラウザ向けに <code>render_template("result.html")</code> をレンダリング。</li>
+<li>それ以外はすべて <code>jsonify(records)</code>（<code>Content-Type: application/json</code>）を返却。</li>
+</ol>
+<hr />
+<h3 id="42-utilspy">4.2 <code>utils.py</code> — 解析オーケストレーション</h3>
+<p>Akochan 呼び出し、データ構築、LLM アドバイス付与、一時ファイル管理を一括制御します。</p>
+<h4 id="_2">定数</h4>
+<ul>
+<li><code>EV_DIFF_THRESHOLD = 0.15</code>: アドバイス生成の閾値。AI 推奨手とプレイヤーの選択の期待値差（<code>loss</code>）がこの値以上の局面のみ LLM に問い合わせを行います。</li>
+</ul>
+<h4 id="_3">主要関数</h4>
+<h5 id="run_analysissource_type-seat-url-file_content-json_body-generate_advicetrue"><code>run_analysis(source_type, seat, url, file_content, json_body, generate_advice=True)</code></h5>
+<ul>
+<li><strong>引数</strong>:</li>
+<li><code>source_type</code>: <code>"url"</code>, <code>"file"</code>, <code>"json"</code> のいずれか</li>
+<li><code>seat</code>: 対象プレイヤーの席番号（0〜3）</li>
+<li><code>url</code>, <code>file_content</code>, <code>json_body</code>: ソースデータ</li>
+<li><code>generate_advice</code>: LLM アドバイス生成を行うフラグ（デフォルト: <code>True</code>）</li>
+<li><strong>処理フロー</strong>:</li>
+<li><code>interactakochan.call_report()</code> を実行して HTML レポートを取得（file/json の場合は一時ファイルを作成）。</li>
+<li><code>build_ai_input.build(report_html, viewer=seat)</code> を実行し、局面オブジェクトの配列（<code>records</code>）を生成。</li>
+<li><code>generate_advice=True</code> の場合、各局面の <code>loss</code> をチェックし、<code>abs(loss) &gt;= 0.15</code> の局面に対して <code>interactllm._generate_advice(rec)</code> を呼び出し、戻り値を <code>rec["commentary"]</code> に代入。</li>
+<li>生成された <code>records</code> をローカルの <code>data.json</code> に書き出し（確認用）。</li>
+<li><code>finally</code> 句で一時ファイルを確実に削除。</li>
+</ul>
+<hr />
+<h3 id="43-build_ai_inputpy">4.3 <code>build_ai_input.py</code> — 局面データ統合モジュール</h3>
+<p>Akochan レポート HTML をパースし、各局面の評価値・候補手表と、<code>reconstruct_table_state.py</code> で復元した卓状況を統合して <code>ai-input-format</code> 仕様の完全な JSON を構築します。</p>
+<h4 id="_4">主要ロジック</h4>
+<ol>
+<li><strong><code>build(html, viewer=None)</code></strong>:</li>
+<li>HTML を BeautifulSoup（<code>lxml</code> パーサー）で解析。</li>
+<li>メタデータ欄から <code>player id</code>（デフォルト: <code>viewer</code> または 0）と <code>AI engine</code> 名を取得。</li>
+<li>レポート内の各局ブロック（<code>report_groups</code>）と、埋め込み天鳳 JSON（<code>load_kyoku_logs</code>）の局数が一致することを検証。</li>
+<li>局ごとに <code>reconstruct_table_state.simulate()</code> を呼び出し、全巡目のスナップショット（手牌・河・副露）を生成。</li>
+<li>HTML 内の <code>details.entry</code>（各局面）とスナップショットを突き合わせ、以下の整合性チェックを実施：<ul>
+<li><strong>手牌照合</strong>: 復元手牌とレポート表示手牌が完全一致するか</li>
+<li><strong>副露照合</strong>: 復元副露とレポート表示副露が完全一致するか</li>
+<li><strong>AI手照合</strong>: 候補手テーブルの第1行目と AI 推奨行動が一致するか</li>
+</ul>
+</li>
+<li><strong><code>parse_action(s, ctx)</code></strong>:</li>
+<li>文字列表記の行動（<code>Discard [2m]</code>, <code>Discard Riichi [4s]</code>, <code>[c] [c] Pon, cut [9s]</code>, <code>Kan [w]</code> 等）を構造化オブジェクトに変換。</li>
+<li>カンの場合、文脈（<code>trigger</code> が <code>draw</code> か <code>opponent_discard</code> か、既にポンしているか）に応じて <code>daiminkan</code> / <code>kakan</code> / <code>ankan</code> を自動判別。</li>
+<li><strong><code>entry_raw(entry)</code></strong>:</li>
+<li><code>details.entry</code> のテーブルから、プレイヤー行動、AI 行動、および全候補手（行動名、期待値 <code>pt_ev</code>、放銃率 <code>deal_in_pct</code>、放銃時期待値 <code>post_deal_in_pt_ev</code>、通過時期待値 <code>tile_passes_pt_ev</code>）をパース。</li>
+</ol>
+<hr />
+<h3 id="44-reconstruct_table_statepy">4.4 <code>reconstruct_table_state.py</code> — 卓状況・手牌復元エンジン</h3>
+<p>HTML レポート内の <code>&lt;textarea&gt;</code> に含まれる天鳳形式 JSON ログ（<code>tenhou.net/6 JSON log</code>）を再生（シミュレーション）し、実戦中の卓状況を完全に復元します。</p>
+<h4 id="_5">復元対象</h4>
+<ul>
+<li><strong>4家の手牌</strong>: 配牌からツモ・打牌・鳴きをトレースした手牌（実戦中非公開の他家手牌 <code>hidden_info.hands</code> を含む）。</li>
+<li><strong>4家の河</strong>: 各家の捨て牌履歴。ツモ切り（<code>tsumogiri</code>）、立直宣言牌（<code>riichi</code>）、鳴かれた牌と鳴き元の相対席（<code>called_by_rel</code>）を属性として記録。</li>
+<li><strong>副露（鳴き）</strong>: チー、ポン、大明槓、加槓、暗槓。鳴いた牌、出し元の相対位置（<code>上家</code>/<code>対面</code>/<code>下家</code>）を管理。加槓では元のポンに4枚目を追加。</li>
+<li><strong>ドラ表示牌・点数・供託</strong>: カンドラの追加表示、立直棒の供託状況、持ち点の推移を追跡。</li>
+</ul>
+<h4 id="_6">座標系・相対位置</h4>
+<p>自家の席（<code>viewer</code>: 0〜3）を基準とし、他家を常に以下の相対位置で扱います：
+- <code>0</code>: <code>self</code>（自分）
+- <code>1</code>: <code>shimocha</code>（下家: <code>(viewer + 1) % 4</code>）
+- <code>2</code>: <code>toimen</code>（対面: <code>(viewer + 2) % 4</code>）
+- <code>3</code>: <code>kamicha</code>（上家: <code>(viewer + 3) % 4</code>）</p>
+<hr />
+<h3 id="45-interactakochanpy-akochan">4.5 <code>interactakochan.py</code> — Akochan サーバー連携モジュール</h3>
+<p>外部で稼働している <code>mjai-reviewer</code> サーバー（デフォルト: <code>http://localhost:8000/report</code>）へ <code>curl</code> コマンドを通じて解析リクエストを送信します。</p>
+<ul>
+<li><code>_build_curl_command(source_type, source, seat, endpoint)</code>:</li>
+<li><code>source_type="url"</code>: <code>-G --data-urlencode url=...</code></li>
+<li><code>source_type="file"</code>: <code>-F file=@...</code></li>
+<li><code>source_type="json"</code>: <code>-H "Content-Type: application/json" --data-binary @...</code></li>
+<li><code>_run_command(cmd)</code>: <code>subprocess.run</code> で実行し、標準出力を UTF-8 文字列として取得。エラー時は標準エラー出力を含めて <code>RuntimeError</code> を送出。</li>
+</ul>
+<hr />
+<h3 id="46-interactllmpy-oci-generative-ai-agent">4.6 <code>interactllm.py</code> — OCI Generative AI Agent 連携モジュール</h3>
+<p>OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用し、プロンプトに基づいてアドバイステキストを生成します。</p>
+<h4 id="_7">フェイルセーフ設計</h4>
+<p>ローカル開発環境やテスト環境など、OCI の認証情報が存在しない場合でもサーバー全体が落ちないよう多層のフォールバック機構を備えています：
+1. <code>oci.auth.signers.InstancePrincipalsSecurityTokenSigner()</code>（OCI クラウドインスタンス上での実行時認証）を試行。
+2. 失敗した場合、ローカルの <code>~/.oci/config</code>（CLI 認証プロファイル）の読み込みを試行。
+3. いずれの認証も失敗した場合は例外をキャッチし、ログに警告（<code>logger.warning</code>）を出力した上で <code>None</code> を返却（<code>commentary: null</code> として安全に継続）。</p>
+<h4 id="_8">プロンプト入力データフォーマット</h4>
+<p>新形式の局面レコード（<code>rec</code>）から以下の変数を抽出・整形して <code>prompt.txt</code> のテンプレートに流し込みます：
+- <code>{kyoku}</code>: 局名（例: <code>"東1局"</code>）
+- <code>{turn}</code>: 巡目（例: <code>8</code>）
+- <code>{tehai}</code>: 手牌一覧（例: <code>"1m 2m 2m 3m 4m 3s 4s 5s 8s 9s e w c 8m"</code>）
+- <code>{ai_discard}</code>: AI推奨手（例: <code>"打 e"</code>）
+- <code>{ai_ev}</code>: AI手の期待値（例: <code>-0.87562</code>）
+- <code>{player_discard}</code>: プレイヤーの選択手（例: <code>"打 w"</code>）
+- <code>{player_ev}</code>: プレイヤー選択の期待値（例: <code>-0.90394</code>）</p>
+<hr />
+<h3 id="47-test_apppy">4.7 <code>test_app.py</code> — 単体テストスイート</h3>
+<p><code>unittest</code> をベースにした自動テストモジュール。モックを使用して Akochan / OCI の実環境に依存せずに高速にテスト可能です。</p>
+<ul>
+<li><code>test_invalid_seat</code>: 不正な席番号（例: <code>seat=5</code>）に対して HTTP 400 が返ることを検証。</li>
+<li><code>test_empty_request</code>: 入力データが空の場合に HTTP 400 が返ることを検証。</li>
+<li><code>test_successful_analysis_json_format</code>: 実サンプル HTML レポート（<code>test_report.html</code>）を入力とし、<code>POST /analyze</code> が 200 OK で新仕様の全フィールド（<code>meta</code>, <code>situation</code>, <code>self</code>, <code>others</code>, <code>hidden_info</code>, <code>decision</code>, <code>commentary</code>）を含む JSON 配列を返すことを検証。</li>
+</ul>
+<hr />
+<h2 id="5-ai-input-format">5. データスキーマ仕様 (<code>ai-input-format</code>)</h2>
+<p>本 API が出力する JSON は、局・半荘全体の局面オブジェクトを配列とした <code>list[dict]</code> 構造です。</p>
+<pre><code class="language-json">[
+  {
+    &quot;meta&quot;: {
+      &quot;engine&quot;: &quot;Akochan&quot;,
+      &quot;kyoku&quot;: &quot;東1局&quot;,
+      &quot;honba&quot;: 0,
+      &quot;kyotaku&quot;: 0,
+      &quot;dora_indicators&quot;: [&quot;e&quot;]
+    },
+    &quot;situation&quot;: {
+      &quot;turn&quot;: 1,
+      &quot;wall_remaining&quot;: 69,
+      &quot;trigger&quot;: &quot;draw&quot;,
+      &quot;trigger_actor&quot;: &quot;自分&quot;,
+      &quot;trigger_tile&quot;: &quot;8m&quot;
+    },
+    &quot;self&quot;: {
+      &quot;wind&quot;: &quot;east&quot;,
+      &quot;is_dealer&quot;: true,
+      &quot;score&quot;: 25000,
+      &quot;hand_with_trigger_tile&quot;: [
+        &quot;1m&quot;, &quot;2m&quot;, &quot;2m&quot;, &quot;3m&quot;, &quot;4m&quot;, &quot;3s&quot;, &quot;4s&quot;, &quot;5s&quot;, &quot;8s&quot;, &quot;9s&quot;, &quot;e&quot;, &quot;w&quot;, &quot;c&quot;, &quot;8m&quot;
+      ],
+      &quot;melds&quot;: [],
+      &quot;river&quot;: [
+        {
+          &quot;tile&quot;: &quot;w&quot;,
+          &quot;tsumogiri&quot;: false,
+          &quot;riichi&quot;: false,
+          &quot;called_by&quot;: null
+        }
+      ]
+    },
+    &quot;others&quot;: {
+      &quot;shimocha&quot;: {
+        &quot;wind&quot;: &quot;south&quot;,
+        &quot;is_dealer&quot;: false,
+        &quot;score&quot;: 25000,
+        &quot;river&quot;: [],
+        &quot;melds&quot;: [],
+        &quot;riichi&quot;: false,
+        &quot;genbutsu&quot;: []
+      },
+      &quot;toimen&quot;: { &quot;...&quot; : &quot;...&quot; },
+      &quot;kamicha&quot;: { &quot;...&quot; : &quot;...&quot; }
+    },
+    &quot;hidden_info&quot;: {
+      &quot;note&quot;: &quot;牌譜から復元した他家の手牌。実戦中は見えない情報。助言の根拠にする場合は『結果から見ると』と明示すること。&quot;,
+      &quot;hands&quot;: {
+        &quot;shimocha&quot;: [&quot;3m&quot;, &quot;4s&quot;, &quot;6m&quot;, &quot;7m&quot;, &quot;7p&quot;, &quot;7p&quot;, &quot;8s&quot;, &quot;9p&quot;, &quot;c&quot;, &quot;e&quot;, &quot;f&quot;, &quot;n&quot;, &quot;p&quot;],
+        &quot;toimen&quot;: [&quot;1s&quot;, &quot;2s&quot;, &quot;3p&quot;, &quot;4m&quot;, &quot;4m&quot;, &quot;4p&quot;, &quot;5sr&quot;, &quot;6m&quot;, &quot;7s&quot;, &quot;9p&quot;, &quot;9p&quot;, &quot;s&quot;, &quot;s&quot;],
+        &quot;kamicha&quot;: [&quot;1m&quot;, &quot;2p&quot;, &quot;2p&quot;, &quot;3p&quot;, &quot;3s&quot;, &quot;4p&quot;, &quot;7m&quot;, &quot;7s&quot;, &quot;8p&quot;, &quot;8s&quot;, &quot;9m&quot;, &quot;n&quot;, &quot;w&quot;]
+      }
+    },
+    &quot;decision&quot;: {
+      &quot;player_choice&quot;: {
+        &quot;type&quot;: &quot;discard&quot;,
+        &quot;tile&quot;: &quot;w&quot;
+      },
+      &quot;ai_choice&quot;: {
+        &quot;type&quot;: &quot;discard&quot;,
+        &quot;tile&quot;: &quot;e&quot;
+      },
+      &quot;loss&quot;: 0.02832,
+      &quot;player_pt_ev&quot;: -0.90394,
+      &quot;ai_pt_ev&quot;: -0.87562,
+      &quot;candidates&quot;: [
+        {
+          &quot;action&quot;: { &quot;type&quot;: &quot;discard&quot;, &quot;tile&quot;: &quot;e&quot; },
+          &quot;pt_ev&quot;: -0.87562,
+          &quot;deal_in_pct&quot;: 0.00034,
+          &quot;post_deal_in_pt_ev&quot;: -32.16042,
+          &quot;tile_passes_pt_ev&quot;: -0.87551
+        },
+        {
+          &quot;action&quot;: { &quot;type&quot;: &quot;discard&quot;, &quot;tile&quot;: &quot;w&quot; },
+          &quot;pt_ev&quot;: -0.90394,
+          &quot;deal_in_pct&quot;: 0.00034,
+          &quot;post_deal_in_pt_ev&quot;: -32.16042,
+          &quot;tile_passes_pt_ev&quot;: -0.90383
+        }
+      ]
+    },
+    &quot;commentary&quot;: &quot;（loss &gt;= 0.15 の局面に付与されるアドバイス文。それ以外は null）&quot;
+  }
+]
+</code></pre>
+<h3 id="mjai">牌表記一覧 (mjai 準拠)</h3>
+<ul>
+<li>萬子: <code>1m</code>〜<code>9m</code>（赤5: <code>5mr</code>）</li>
+<li>筒子: <code>1p</code>〜<code>9p</code>（赤5: <code>5pr</code>）</li>
+<li>索子: <code>1s</code>〜<code>9s</code>（赤5: <code>5sr</code>）</li>
+<li>字牌: <code>e</code>（東）, <code>s</code>（南）, <code>w</code>（西）, <code>n</code>（北）, <code>p</code>（白）, <code>f</code>（發）, <code>c</code>（中）</li>
+</ul>
+<hr />
+<h2 id="6">6. エラーハンドリング仕様</h2>
+<table>
+<thead>
+<tr>
+<th>HTTP ステータス</th>
+<th>発生条件</th>
+<th>レスポンス形式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>400 Bad Request</strong></td>
+<td><code>seat</code> が 0〜3 以外、入力データが空、URL 形式の不正</td>
+<td><code>{"error": "エラー詳細メッセージ"}</code></td>
+</tr>
+<tr>
+<td><strong>404 Not Found</strong></td>
+<td>存在しないエンドポイントへのリクエスト</td>
+<td>HTML エラーページ</td>
+</tr>
+<tr>
+<td><strong>500 Internal Server Error</strong></td>
+<td>解析エンジン（Akochan）の通信失敗、パース不整合</td>
+<td><code>{"error": "エラー詳細メッセージ"}</code> （HTMLモード時は <code>error.html</code>）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7">7. 環境要件とセットアップ</h2>
+<h3 id="_9">前提環境</h3>
+<ul>
+<li>Python: 3.10 以上</li>
+<li>OS: Linux / macOS / Windows</li>
+<li>外部依存: <code>curl</code> コマンド、<code>mjai-reviewer</code>（ポート 8000 で起動）</li>
+</ul>
+<h3 id="_10">起動・テストコマンド</h3>
+<pre><code class="language-bash"># 依存ライブラリのインストール
+pip install -r backend/requirements.txt
+
+# 単体テストの実行
+python backend/test_app.py
+
+# サーバー起動 (デフォルト: 0.0.0.0:8080)
+python backend/app.py
+</code></pre>
+</body>
+</html>
