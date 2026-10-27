@@ -17,6 +17,7 @@ AI (Akochan / mjai-reviewer) の麻雀牌譜解析結果から卓状況（河・
   - **`app.py`**: アプリケーションのメインエントリーポイント（Flask）
   - **`utils.py`**: 解析実行およびデータ統合のオーケストレーション
   - **`build_ai_input.py`**: レポートHTMLから各局面の評価値・候補手・卓状況を統合し、新仕様 JSON を生成するモジュール
+  - **`build_report.py`**: 新仕様 JSON から画面（`result_manyhands.html`）用ビューモデルへの変換モジュール
   - **`reconstruct_table_state.py`**: 埋め込み天鳳形式ログから自他家の手牌・河・副露・ドラなどの卓状況を完全復元するモジュール
   - **`interactakochan.py`**: Akochan 解析エンジン（mjai-reviewer サーバー）との連携モジュール
   - **`interactllm.py`**: OCI Generative AI Agent と連携してアドバイスを生成するモジュール

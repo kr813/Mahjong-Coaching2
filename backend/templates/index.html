@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="ja">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -16,7 +15,6 @@
             min-height: 100vh;
             margin: 0;
         }
-
         .container {
             background-color: #ffffff;
             padding: 40px;
@@ -26,31 +24,22 @@
             max-width: 520px;
             box-sizing: border-box;
         }
-
-        h1 {
-            font-size: 20px;
-            color: #2c3e50;
-            margin-bottom: 25px;
-            text-align: center;
-        }
-
+        h1 { font-size: 20px; color: #2c3e50; margin-bottom: 25px; text-align: center; }
+        
         .input-group {
             margin-bottom: 20px;
             text-align: left;
         }
-
-        label {
-            display: block;
-            font-size: 13px;
-            color: #7f8c8d;
-            margin-bottom: 8px;
-            font-weight: bold;
+        label { 
+            display: block; 
+            font-size: 13px; 
+            color: #7f8c8d; 
+            margin-bottom: 8px; 
+            font-weight: bold; 
         }
-
+        
         /* テキストエリアとセレクトボックス共通のスタイル */
-        textarea,
-        select,
-        input[type="file"] {
+        textarea, select, input[type="file"] {
             width: 100%;
             padding: 12px;
             box-sizing: border-box;
@@ -60,14 +49,11 @@
             font-family: inherit;
             transition: border-color 0.2s;
         }
-
         textarea {
             resize: vertical;
             height: 100px;
         }
-
-        textarea:focus,
-        select:focus {
+        textarea:focus, select:focus {
             outline: none;
             border-color: #3498db;
         }
@@ -79,9 +65,7 @@
             font-size: 13px;
             position: relative;
         }
-
-        .divider::before,
-        .divider::after {
+        .divider::before, .divider::after {
             content: "";
             position: absolute;
             top: 50%;
@@ -89,14 +73,8 @@
             height: 1px;
             background-color: #dfe6e9;
         }
-
-        .divider::before {
-            left: 0;
-        }
-
-        .divider::after {
-            right: 0;
-        }
+        .divider::before { left: 0; }
+        .divider::after { right: 0; }
 
         .submit-btn {
             width: 100%;
@@ -111,11 +89,8 @@
             transition: background-color 0.2s;
             margin-top: 10px;
         }
-
-        .submit-btn:hover {
-            background-color: #2980b9;
-        }
-
+        .submit-btn:hover { background-color: #2980b9; }
+        
         .error-message {
             color: #e74c3c;
             font-size: 12px;
@@ -124,65 +99,62 @@
         }
     </style>
 </head>
-
 <body>
 
-    <div class="container">
-        <h1>麻雀 AI牌譜添削ツール</h1>
+<div class="container">
+    <h1>麻雀 AI牌譜添削ツール</h1>
+    
+    <!-- ファイル送信を含むため enctype="multipart/form-data" を指定 -->
+    <form id="analyzeForm" action="/analyze" method="POST" enctype="multipart/form-data" onsubmit="return validateForm()">
+        
+        <!-- 1. URL または JSON入力用のテキストエリア -->
+        <div class="input-group">
+            <label for="inputData">牌譜URL または JSONデータ</label>
+            <textarea id="inputData" name="input_data" placeholder="https://... または JSONテキストをそのまま貼り付け"></textarea>
+        </div>
 
-        <!-- ファイル送信を含むため enctype="multipart/form-data" を指定 -->
-        <form id="analyzeForm" action="/analyze" method="POST" enctype="multipart/form-data"
-            onsubmit="return validateForm()">
+        <div class="divider">または</div>
 
-            <!-- 1. URL または JSON入力用のテキストエリア -->
-            <div class="input-group">
-                <label for="inputData">牌譜URL または JSONデータ</label>
-                <textarea id="inputData" name="input_data" placeholder="https://... または JSONテキストをそのまま貼り付け"></textarea>
-            </div>
+        <!-- 2. ファイルアップロード -->
+        <div class="input-group">
+            <label for="fileInput">JSONファイルを選択</label>
+            <input type="file" id="fileInput" name="file" accept=".json">
+        </div>
 
-            <div class="divider">または</div>
+        <!-- 3. 自家（seat）の選択プルダウン -->
+        <div class="input-group">
+            <label for="seatSelect">自家（シート）の指定</label>
+            <select id="seatSelect" name="seat">
+                <option value="0">東家 (East)</option>
+                <option value="1">南家 (South)</option>
+                <option value="2">西家 (West)</option>
+                <option value="3">北家 (North)</option>
+            </select>
+        </div>
 
-            <!-- 2. ファイルアップロード -->
-            <div class="input-group">
-                <label for="fileInput">JSONファイルを選択</label>
-                <input type="file" id="fileInput" name="file" accept=".json">
-            </div>
+        <div id="errorMsg" class="error-message"></div>
+        
+        <button type="submit" class="submit-btn">解析を開始する</button>
+    </form>
+</div>
 
-            <!-- 3. 自家（seat）の選択プルダウン -->
-            <div class="input-group">
-                <label for="seatSelect">自家（シート）の指定</label>
-                <select id="seatSelect" name="seat">
-                    <option value="0">東家 (East)</option>
-                    <option value="1">南家 (South)</option>
-                    <option value="2">西家 (West)</option>
-                    <option value="3">北家 (North)</option>
-                </select>
-            </div>
+<script>
+    function validateForm() {
+        const inputData = document.getElementById('inputData').value.trim();
+        const fileInput = document.getElementById('fileInput').files.length;
+        const errorMsg = document.getElementById('errorMsg');
 
-            <div id="errorMsg" class="error-message"></div>
-
-            <button type="submit" class="submit-btn">解析を開始する</button>
-        </form>
-    </div>
-
-    <script>
-        function validateForm() {
-            const inputData = document.getElementById('inputData').value.trim();
-            const fileInput = document.getElementById('fileInput').files.length;
-            const errorMsg = document.getElementById('errorMsg');
-
-            // いずれも入力されていない場合はエラー
-            if (inputData === "" && fileInput === 0) {
-                errorMsg.textContent = "URL、JSONテキスト、またはファイルのうちいずれかを入力・選択してください。";
-                errorMsg.style.display = "block";
-                return false;
-            }
-
-            errorMsg.style.display = "none";
-            return true;
+        // いずれも入力されていない場合はエラー
+        if (inputData === "" && fileInput === 0) {
+            errorMsg.textContent = "URL、JSONテキスト、またはファイルのうちいずれかを入力・選択してください。";
+            errorMsg.style.display = "block";
+            return false;
         }
-    </script>
+
+        errorMsg.style.display = "none";
+        return true;
+    }
+</script>
 
 </body>
-
 </html>

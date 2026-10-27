@@ -64,6 +64,7 @@ Mahjong-Coaching2/
     ├── app.py                      # Flask アプリケーション本体（API ルーティング）
     ├── utils.py                    # 処理オーケストレーション（解析・LLM 付与）
     ├── build_ai_input.py           # レポート HTML から新仕様 JSON への統合モジュール
+    ├── build_report.py             # 新仕様 JSON から画面用ビューモデルへの変換モジュール
     ├── reconstruct_table_state.py  # 天鳳ログから卓状況（河・副露・手牌）の復元モジュール
     ├── interactakochan.py          # Akochan サーバー連携モジュール（curl 経由）
     ├── interactllm.py              # OCI Generative AI Agent 連携モジュール
@@ -75,9 +76,10 @@ Mahjong-Coaching2/
     │   ├── test.json               # テスト用 JSON
     │   └── test_report.html        # テスト用 Akochan レポート HTML
     └── templates/                  # ブラウザ直接アクセス用テンプレート
-        ├── index.html              # 入力フォーム画面
-        ├── result.html             # 解析結果画面（フォールバック用）
-        └── error.html              # エラー表示画面
+        ├── index.html              # 入力フォーム画面（Mahjong-Coaching_FrontEnd v2）
+        ├── result_manyhands.html   # 新仕様対応 牌譜検討結果画面（他家の河・副露・AI助言対応）
+        ├── result.html             # 解析結果画面（互換エイリアス）
+        └── error.html              # エラー表示画面（400 / 404 / 500対応）
 ```
 
 ---

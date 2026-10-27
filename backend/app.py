@@ -4,16 +4,39 @@ import os
 
 from flask import Flask, Response, jsonify, request, render_template, abort
 
+from build_report import build_report, VALID_TILES
 import utils
 
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
 
 
+def _wants_html() -> bool:
+    """リクエストが HTML 画面の返却を求めているかどうかを判定"""
+    if request.path.startswith("/api/"):
+        return False
+    format_type = (request.args.get("format") or request.form.get("format") or "").strip().lower()
+    if format_type == "json":
+        return False
+    if format_type == "html":
+        return True
+    if request.is_json or request.headers.get("Accept") == "application/json" or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return False
+    # 通常のブラウザアクセス（GET / フォームPOST）
+    return "text/html" in request.headers.get("Accept", "") or bool(request.form)
+
+
 def _execute_analysis():
     # seat: フォーム (request.form) → クエリパラメータ (request.args) の順で取得
     seat = (request.form.get("seat") or request.args.get("seat") or "0").strip()
     if seat not in {"0", "1", "2", "3"}:
+        if _wants_html():
+            return render_template(
+                "error.html",
+                error_code="400",
+                error_title="不正なリクエストです",
+                error_message="自家 (seat) は 0, 1, 2, 3 のいずれかを指定してください。"
+            ), 400
         return jsonify(error="seat must be 0, 1, 2, or 3"), 400
 
     # source_type: 明示指定 → 自動判定
@@ -41,6 +64,13 @@ def _execute_analysis():
         elif request.is_json:
             source_type = "json"
         else:
+            if _wants_html():
+                return render_template(
+                    "error.html",
+                    error_code="400",
+                    error_title="不正なリクエストです",
+                    error_message="URL、JSONテキスト、またはファイルのうちいずれかを入力・選択してください。"
+                ), 400
             return jsonify(error="source_type is required when url/file/json is not provided"), 400
 
     url = None
@@ -51,10 +81,24 @@ def _execute_analysis():
         # フォームの input_data → クエリパラメータ url の順で取得
         url = input_data or (request.args.get("url") or "").strip()
         if not url:
+            if _wants_html():
+                return render_template(
+                    "error.html",
+                    error_code="400",
+                    error_title="不正なリクエストです",
+                    error_message="URL が指定されていません。"
+                ), 400
             return jsonify(error="URL が指定されていません"), 400
     elif source_type == "file":
         uploaded_file = request.files.get("file")
         if uploaded_file is None or uploaded_file.filename == "":
+            if _wants_html():
+                return render_template(
+                    "error.html",
+                    error_code="400",
+                    error_title="不正なリクエストです",
+                    error_message="ファイルが選択されていません。"
+                ), 400
             return jsonify(error="ファイルが選択されていません"), 400
         file_content = uploaded_file.read()
     elif source_type == "json":
@@ -64,9 +108,16 @@ def _execute_analysis():
         elif request.is_json:
             json_body = request.get_data()
         if not json_body:
+            if _wants_html():
+                return render_template(
+                    "error.html",
+                    error_code="400",
+                    error_title="不正なリクエストです",
+                    error_message="JSON データが空です。"
+                ), 400
             return jsonify(error="JSON データが空です"), 400
 
-    format_type = (request.args.get("format") or request.form.get("format") or "json").strip().lower()
+    is_html = _wants_html()
 
     try:
         records = utils.run_analysis(
@@ -77,14 +128,22 @@ def _execute_analysis():
             json_body=json_body
         )
 
-        if format_type == "html":
-            return render_template("result.html", records=records)
+        if is_html:
+            report_data = build_report(records)
+            return render_template("result_manyhands.html", valid_tiles=VALID_TILES, **report_data)
 
         return jsonify(records)
     except ValueError as e:
+        if is_html:
+            return render_template(
+                "error.html",
+                error_code="400",
+                error_title="不正なリクエストです",
+                error_message=str(e)
+            ), 400
         return jsonify(error=str(e)), 400
     except Exception as e:
-        if format_type == "html":
+        if is_html:
             return render_template(
                 "error.html",
                 error_code="500",
@@ -103,6 +162,7 @@ def analyze() -> str | Response | tuple[str, int]:
 def api_analyze() -> str | Response | tuple[str, int]:
     return _execute_analysis()
 
+
 @app.route("/", methods=["GET"])
 def index() -> str:
     return render_template("index.html")
@@ -115,32 +175,38 @@ def error() -> Response | tuple[str, int]:
 
 @app.errorhandler(404)
 def page_not_found(e):
-    return render_template(
-        "error.html",
-        error_code="404",
-        error_title="ページが見つかりません",
-        error_message="お探しのページは移動または削除されたか、URLが間違っている可能性があります。"
-    ), 404
+    if _wants_html():
+        return render_template(
+            "error.html",
+            error_code="404",
+            error_title="ページが見つかりません",
+            error_message="お探しのページは移動または削除されたか、URLが間違っている可能性があります。"
+        ), 404
+    return jsonify(error="Not Found", message="お探しのページは見つかりませんでした。"), 404
 
 
 @app.errorhandler(400)
 def bad_request(e):
-    return render_template(
-        "error.html",
-        error_code="400",
-        error_title="不正なリクエストです",
-        error_message="送信されたデータに誤りがあるか、処理できない形式のリクエストです。"
-    ), 400
+    if _wants_html():
+        return render_template(
+            "error.html",
+            error_code="400",
+            error_title="不正なリクエストです",
+            error_message="送信されたデータに誤りがあるか、処理できない形式のリクエストです。"
+        ), 400
+    return jsonify(error="Bad Request", message="不正なリクエストです。"), 400
 
 
 @app.errorhandler(500)
 def internal_server_error(e):
-    return render_template(
-        "error.html",
-        error_code="500",
-        error_title="サーバーエラーが発生しました",
-        error_message="バックエンド側で問題が発生しました。しばらく時間を置いてから再度お試しください。"
-    ), 500
+    if _wants_html():
+        return render_template(
+            "error.html",
+            error_code="500",
+            error_title="サーバーエラーが発生しました",
+            error_message="バックエンド側で問題が発生しました。しばらく時間を置いてから再度お試しください。"
+        ), 500
+    return jsonify(error="Internal Server Error", message="サーバー内部でエラーが発生しました。"), 500
 
 
 if __name__ == "__main__":
