@@ -87,43 +87,72 @@ def _format_record(rec: dict) -> dict:
         kyoku_base = meta.get("kyoku", "不明")
         honba = meta.get("honba", 0)
         kyotaku = meta.get("kyotaku", 0)
-        dora_ind = " ".join(_tile_ja(t) for t in meta.get("dora_indicators", [])) or "不明"
-        kyoku_str = f"{kyoku_base} {honba}本場 (供託{kyotaku}本 / ドラ表示牌: {dora_ind})"
+        kyoku_str = f"{kyoku_base} {honba}本場 (供託{kyotaku}本)"
+        dora_str = " ".join(_tile_ja(t) for t in meta.get("dora_indicators", [])) or "不明"
 
         turn_num = sit.get("turn", 0)
+        wall_rem = sit.get("wall_remaining")
+        wall_str = f"{wall_rem}枚" if wall_rem is not None else "不明"
         trig = sit.get("trigger")
         trig_tile = _tile_ja(sit.get("trigger_tile"))
         if trig == "draw" and trig_tile:
-            turn_str = f"{turn_num} (自摸: {trig_tile})"
+            trig_str = f"自摸: {trig_tile}"
         elif trig == "opponent_discard" and trig_tile:
             actor = sit.get("trigger_actor", "他家")
-            turn_str = f"{turn_num} ({actor}の打牌: {trig_tile})"
+            trig_str = f"{actor}の打牌: {trig_tile}"
         else:
-            turn_str = str(turn_num)
+            trig_str = "なし"
 
+        # 自家情報
+        my_wind = WIND_JA.get(me.get("wind", ""), "不明")
+        dealer_str = "親" if me.get("is_dealer") else "子"
+        my_score = me.get("score")
+        score_str = f"{my_score}点" if my_score is not None else ""
+        self_info_str = f"{my_wind}({dealer_str}) {score_str}".strip()
+
+        # 手牌・副露
         tehai_list = me.get("hand_with_trigger_tile", [])
         closed_str = " ".join(_tile_ja(str(t)) for t in tehai_list) if tehai_list else "不明"
-        my_wind = WIND_JA.get(me.get("wind", ""), "")
-        my_score = me.get("score")
-        my_melds = _melds_to_str(me.get("melds", []))
+        my_melds_str = _melds_to_str(me.get("melds", []))
 
-        riichi_others = [
-            f"{ rel_label }リーチ中"
-            for rel_key, rel_label in REL_JA.items()
-            if isinstance(others.get(rel_key), dict) and others[rel_key].get("riichi")
-        ]
-        riichi_info = f" / 他家: {', '.join(riichi_others)}" if riichi_others else ""
+        # 他家の状況
+        others_parts = []
+        for rel_k, rel_label in REL_JA.items():
+            if isinstance(others.get(rel_k), dict):
+                op = others[rel_k]
+                o_wind = WIND_JA.get(op.get("wind", ""), "")
+                o_score = f"{op.get('score')}点" if op.get("score") is not None else ""
+                o_riichi = " [立直中]" if op.get("riichi") else ""
+                o_melds = _melds_to_str(op.get("melds", []))
+                others_parts.append(f"{rel_label}({o_wind} {o_score}{o_riichi} / 副露: {o_melds})")
+        others_str = " / ".join(others_parts) if others_parts else "情報なし"
 
-        tehai_full = f"{closed_str} （自家: {my_wind} {my_score}点 / 副露: {my_melds}{riichi_info}）"
+        pl_choice_str = _choice_to_str(dec.get("player_choice"))
+        pl_ev = dec.get("player_pt_ev")
+        pl_ev_str = f"{pl_ev:.5f}" if isinstance(pl_ev, (int, float)) else "算出不可"
+
+        ai_choice_str = _choice_to_str(dec.get("ai_choice"))
+        ai_ev = dec.get("ai_pt_ev")
+        ai_ev_str = f"{ai_ev:.5f}" if isinstance(ai_ev, (int, float)) else "算出不可"
+
+        loss_val = dec.get("loss")
+        loss_str = f"{abs(loss_val):.5f}" if isinstance(loss_val, (int, float)) else "算出不可"
 
         return {
             "kyoku": kyoku_str,
-            "turn": turn_str,
-            "tehai": tehai_full,
-            "ai_discard": _choice_to_str(dec.get("ai_choice")),
-            "ai_ev": dec.get("ai_pt_ev", 0.0) or 0.0,
-            "player_discard": _choice_to_str(dec.get("player_choice")),
-            "player_ev": dec.get("player_pt_ev", 0.0) or 0.0,
+            "dora": dora_str,
+            "turn": str(turn_num),
+            "wall_remaining": wall_str,
+            "trigger_info": trig_str,
+            "self_info": self_info_str,
+            "tehai": closed_str,
+            "my_melds": my_melds_str,
+            "others_info": others_str,
+            "ai_discard": ai_choice_str,
+            "ai_ev": ai_ev_str,
+            "player_discard": pl_choice_str,
+            "player_ev": pl_ev_str,
+            "loss": loss_str,
         }
 
     max_loss_turn = rec.get("max_loss_turn", rec)
@@ -135,12 +164,19 @@ def _format_record(rec: dict) -> dict:
 
     return {
         "kyoku": max_loss_turn.get("kyoku", "不明"),
-        "turn": max_loss_turn.get("turn", 0),
+        "dora": "不明",
+        "turn": str(max_loss_turn.get("turn", 0)),
+        "wall_remaining": "不明",
+        "trigger_info": "不明",
+        "self_info": "不明",
         "tehai": tehai_str,
+        "my_melds": "なし",
+        "others_info": "情報なし",
         "ai_discard": max_loss_turn.get("ai_discard", "不明"),
-        "ai_ev": max_loss_turn.get("ai_ev", 0.0),
+        "ai_ev": str(max_loss_turn.get("ai_ev", 0.0)),
         "player_discard": max_loss_turn.get("player_discard", "不明"),
-        "player_ev": max_loss_turn.get("player_ev", 0.0),
+        "player_ev": str(max_loss_turn.get("player_ev", 0.0)),
+        "loss": "不明",
     }
 
 
