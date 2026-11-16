@@ -92,15 +92,40 @@ def load_log(html):
     return json.loads(soup.find("textarea").get_text()), soup
 
 
-def check_heading(heading, k):
-    """局見出し(例 'East 2-1 Tsumo by ...')が、牌譜の局・本場と一致するか確認する"""
+def parse_heading(heading):
+    """局見出し(例 'East 2-1 Tsumo by ...')から [kyoku_no, honba] を返す"""
     m = re.match(r"(East|South|West|North)\s+(\d)(?:-(\d+))?", heading.replace("\xa0", " "))
     if not m:
         raise ValueError(f"局見出しを解釈できません: {heading!r}")
     kyoku_no = KYOKU_WIND[m.group(1)] * 4 + int(m.group(2)) - 1
     honba = int(m.group(3) or 0)
-    if [kyoku_no, honba] != [k[0][0], k[0][1]]:
+    return [kyoku_no, honba]
+
+
+def check_heading(heading, k):
+    """局見出し(例 'East 2-1 Tsumo by ...')が、牌譜の局・本場と一致するか確認する"""
+    if parse_heading(heading) != [k[0][0], k[0][1]]:
         raise ValueError(f"局見出し {heading!r} と牌譜の局 {k[0]} が一致しません")
+
+
+def pair_groups_and_logs(groups, logs):
+    """レポートの局見出しリスト(groups)と牌譜の局リスト(logs)を、局・本場の出現順で対応付ける。
+    自分の手番が1回も回らずレポートに見出しが出なかった局があってもスキップして対応付ける。"""
+    paired = []
+    log_idx = 0
+    for heading, ents in groups:
+        target = parse_heading(heading)
+        found = None
+        while log_idx < len(logs):
+            k = logs[log_idx]
+            log_idx += 1
+            if [k[0][0], k[0][1]] == target:
+                found = k
+                break
+        if found is None:
+            raise ValueError(f"局見出し {heading!r} に対応する牌譜の局が見つかりません")
+        paired.append(((heading, ents), found))
+    return paired
 
 
 def _tile_of(svg):
@@ -287,11 +312,8 @@ def main(path):
     meta = get_meta(soup)
     viewer = int(meta.get("player id", 0))
     logs, groups = load_kyoku_logs(soup), report_groups(soup)
-    if len(logs) != len(groups):
-        raise ValueError(f"牌譜の局数({len(logs)})と、レポートの局見出し({len(groups)})が違います")
     out, bad = [], 0
-    for (heading, ents), k in zip(groups, logs):
-        check_heading(heading, k)
+    for (heading, ents), k in pair_groups_and_logs(groups, logs):
         snaps, final = simulate(k, viewer)
         for ent in ents:
             snap = match_snapshot(snaps, ent, viewer)

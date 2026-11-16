@@ -24,6 +24,9 @@ TILE_MAP = {
 VALID_TILES = set(TILE_MAP)
 
 EV_WARNING_THRESHOLD = 0.15
+ADVICE_WORST_N = 5
+MARK_WORST = "⚠️"
+MARK_WARNING = "😕"
 REPORT_TITLE = "牌譜検討"
 AI_LABEL = "AI"
 
@@ -281,7 +284,14 @@ def rivers_view(rec: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def entry_view(rec: dict[str, Any], threshold: float) -> dict[str, Any]:
+def worst_ranks(losses: list[float | None], n: int = ADVICE_WORST_N) -> dict[int, int]:
+    """期待値差のリスト → {局面の番号: ワースト順位(1〜n)}。null・0 は対象外。同じ値なら先の局面が上位"""
+    scored = [(i, abs(l)) for i, l in enumerate(losses) if l is not None and abs(l) > 0]
+    scored.sort(key=lambda x: -x[1])
+    return {i: rank for rank, (i, _) in enumerate(scored[:n], start=1)}
+
+
+def entry_view(rec: dict[str, Any], threshold: float, worst_rank: int | None = None) -> dict[str, Any]:
     """局面1件（新形式）→ 画面用の辞書。画面に必要な項目だけを、JSONから抽出する"""
     sit, me, dec = rec["situation"], rec["self"], rec["decision"]
 
@@ -311,6 +321,7 @@ def entry_view(rec: dict[str, Any], threshold: float) -> dict[str, Any]:
         "loss": loss,
         "is_match": player_choice == ai_choice,
         "is_warning": loss is not None and abs(loss) >= threshold,
+        "worst_rank": worst_rank,
         "commentary": rec.get("commentary"),
     }
 
@@ -318,7 +329,8 @@ def entry_view(rec: dict[str, Any], threshold: float) -> dict[str, Any]:
 def build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
     """画面 (result_manyhands.html) に渡すJSON全体を作る"""
     kyokus: dict[str, dict[str, Any]] = {}
-    for rec in records:
+    ranks = worst_ranks([rec["decision"]["loss"] for rec in records])
+    for i, rec in enumerate(records):
         title = kyoku_title(rec["meta"])
         if title not in kyokus:
             kyokus[title] = {
@@ -327,7 +339,7 @@ def build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
                 "end_status": "",
                 "entries": [],
             }
-        kyokus[title]["entries"].append(entry_view(rec, EV_WARNING_THRESHOLD))
+        kyokus[title]["entries"].append(entry_view(rec, EV_WARNING_THRESHOLD, ranks.get(i)))
 
     entries = [e for k in kyokus.values() for e in k["entries"]]
     total = len(entries)
@@ -345,7 +357,9 @@ def build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
             ["局面数", total],
             ["AI一致率", f"{matched}/{total} = {match_rate}"],
             ["注意局面", f"{warned}/{total}（期待値差 {EV_WARNING_THRESHOLD} 以上）"],
+            ["AIアドバイス", f"期待値差の大きい順にワースト{len(ranks)}"],
         ],
+        "marks": {"worst": MARK_WORST, "warning": MARK_WARNING, "worst_n": ADVICE_WORST_N},
         "has_rivers": any(e["rivers"] for e in entries),
         "kyokus": list(kyokus.values()),
     }

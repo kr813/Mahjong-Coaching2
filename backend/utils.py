@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import build_ai_input
+from build_report import worst_ranks
 import interactakochan
 import interactllm
 
@@ -16,9 +17,9 @@ EV_DIFF_THRESHOLD = 0.15
 
 
 def write_temp_file(suffix: str, content: bytes) -> Path:
-    temp_file = Path(tempfile.NamedTemporaryFile(suffix=suffix, delete=False).name)
-    temp_file.write_bytes(content)
-    return temp_file
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+        tf.write(content)
+        return Path(tf.name)
 
 
 def remove_file(path: Path | None) -> None:
@@ -48,11 +49,19 @@ def run_analysis(
         elif source_type == "file":
             if not file_content:
                 raise ValueError("file upload is required for source_type=file")
+            try:
+                json.loads(file_content.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                raise ValueError("アップロードされたファイルが正しいJSON形式ではありません。") from e
             temp_input_path = write_temp_file(".json", file_content)
             report_html = interactakochan.call_report(source_type="file", file_path=str(temp_input_path), seat=seat)
         elif source_type == "json":
             if not json_body:
                 raise ValueError("JSON body is required for source_type=json")
+            try:
+                json.loads(json_body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                raise ValueError("入力されたデータが正しいJSON形式ではありません。") from e
             temp_input_path = write_temp_file(".json", json_body)
             report_html = interactakochan.call_report(source_type="json", json_path=str(temp_input_path), seat=seat)
         else:
@@ -63,13 +72,12 @@ def run_analysis(
         if not records:
             raise ValueError("No analysable report entries were found.")
 
-        # 期待値差がしきい値以上の判断にのみLLMアドバイスを生成してcommentaryに付与
+        # 期待値差が大きい順ワースト5の判断にのみLLMアドバイスを生成してcommentaryに付与
         if generate_advice:
-            for rec in records:
-                loss = rec.get("decision", {}).get("loss")
-                if loss is not None and abs(loss) >= EV_DIFF_THRESHOLD:
-                    advice = interactllm._generate_advice(rec)
-                    rec["commentary"] = advice
+            ranks = worst_ranks([rec.get("decision", {}).get("loss") for rec in records])
+            for i in ranks:
+                advice = interactllm._generate_advice(records[i])
+                records[i]["commentary"] = advice
 
         # デバッグ・ログ確認用に data.json に保存
         try:

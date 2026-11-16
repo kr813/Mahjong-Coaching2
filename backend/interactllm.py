@@ -9,26 +9,65 @@ logger = logging.getLogger(__name__)
 # AIエージェントのエンドポイントを入力
 AGENT_ENDPOINT_OCID = os.environ.get(
     "OCI_GENAI_AGENT_ENDPOINT_OCID",
-    "ocid1.genaiagentendpoint.oc1.ap-osaka-1.amaaaaaapimhcliabtyh3wlwiyf7izkcn566uq6djbevsgryad5xd62y3kqq"
+    "ocid1.genaiagentendpoint.oc1.ap-osaka-1.amaaaaaapimhcliaxbtu4ubtsaab7sydtcj4cut2aqdshdhtwpgirrqqqrwq"
 )
 REGION = os.environ.get("OCI_REGION", "ap-osaka-1")
+
+
+HONOR_JA = {"e": "東", "s": "南", "w": "西", "n": "北", "p": "白", "f": "發", "c": "中"}
+SUIT_JA = {"m": "萬", "p": "筒", "s": "索"}
+WIND_JA = {"east": "東家", "south": "南家", "west": "西家", "north": "北家"}
+REL_JA = {"shimocha": "下家", "toimen": "対面", "kamicha": "上家"}
+
+
+def _tile_ja(code: str | None) -> str:
+    if not code:
+        return ""
+    if code in HONOR_JA:
+        return HONOR_JA[code]
+    if len(code) == 3 and code.endswith("r") and code[1] in SUIT_JA:
+        return f"赤{code[0]}{SUIT_JA[code[1]]}"
+    if len(code) == 2 and code[0].isdigit() and code[1] in SUIT_JA:
+        return f"{code[0]}{SUIT_JA[code[1]]}"
+    return str(code)
 
 
 def _choice_to_str(choice: dict | str | None) -> str:
     if isinstance(choice, dict):
         action_type = choice.get("type", "")
-        tile = choice.get("tile", "")
+        tile = _tile_ja(choice.get("tile", ""))
         if action_type == "discard":
             riichi = " 立直" if choice.get("riichi") else ""
             return f"打 {tile}{riichi}" if tile else "打牌"
         if action_type in ("pon", "chi"):
-            with_tiles = "".join(choice.get("with_tiles", []))
-            then_cut = f" 切 {choice.get('then_discard')}" if choice.get("then_discard") else ""
-            return f"{action_type.capitalize()} ({with_tiles}){then_cut}"
+            with_tiles = " ".join(_tile_ja(t) for t in choice.get("with_tiles", []))
+            then_cut = f" → 打 {_tile_ja(choice.get('then_discard'))}" if choice.get("then_discard") else ""
+            label = "ポン" if action_type == "pon" else "チー"
+            return f"{label} ({with_tiles}){then_cut}"
         if action_type in ("daiminkan", "kakan", "ankan"):
-            return f"{action_type} {tile}"
+            label = {"daiminkan": "大明槓", "kakan": "加槓", "ankan": "暗槓"}[action_type]
+            return f"{label} {tile}"
+        if action_type == "skip":
+            return "スルー (鳴かない)"
+        if action_type == "ron":
+            return "ロン"
+        if action_type == "tsumo":
+            return "ツモ"
         return action_type
     return str(choice or "不明")
+
+
+def _melds_to_str(melds: list[dict]) -> str:
+    if not melds:
+        return "なし(門前)"
+    parts = []
+    for m in melds:
+        tiles = " ".join(_tile_ja(t) for t in m.get("tiles", []))
+        mtype = {"pon": "ポン", "chi": "チー", "daiminkan": "大明槓", "kakan": "加槓", "ankan": "暗槓"}.get(
+            m.get("type", ""), m.get("type", "副露")
+        )
+        parts.append(f"{mtype}[{tiles}]")
+    return " / ".join(parts)
 
 
 def _format_record(rec: dict) -> dict:
@@ -37,15 +76,56 @@ def _format_record(rec: dict) -> dict:
         meta = rec.get("meta", {})
         sit = rec.get("situation", {})
         me = rec.get("self", {})
+        others = rec.get("others", {})
         dec = rec.get("decision", {})
 
+        kyoku_base = meta.get("kyoku", "不明")
+        honba = meta.get("honba", 0)
+        kyotaku = meta.get("kyotaku", 0)
+        dora_ind = " ".join(_tile_ja(t) for t in meta.get("dora_indicators", [])) or "不明"
+        kyoku_str = f"{kyoku_base} {honba}本場 (供託{kyotaku}本 / ドラ表示牌: {dora_ind})"
+
+        turn_num = sit.get("turn", 0)
+        trig = sit.get("trigger")
+        trig_tile = _tile_ja(sit.get("trigger_tile"))
+        if trig == "draw" and trig_tile:
+            turn_str = f"{turn_num} (自摸: {trig_tile})"
+        elif trig == "opponent_discard" and trig_tile:
+            actor = sit.get("trigger_actor", "他家")
+            turn_str = f"{turn_num} ({actor}の打牌: {trig_tile})"
+        else:
+            turn_str = str(turn_num)
+
         tehai_list = me.get("hand_with_trigger_tile", [])
-        tehai_str = " ".join(str(t) for t in tehai_list) if tehai_list else "不明"
+        closed_str = " ".join(_tile_ja(str(t)) for t in tehai_list) if tehai_list else "不明"
+        my_wind = WIND_JA.get(me.get("wind", ""), "")
+        my_score = me.get("score")
+        my_melds = _melds_to_str(me.get("melds", []))
+        my_river = " ".join(_tile_ja(r.get("tile")) for r in me.get("river", [])) or "なし"
+
+        other_lines = []
+        for rel_key, rel_label in REL_JA.items():
+            o = others.get(rel_key)
+            if not isinstance(o, dict):
+                continue
+            riichi_str = "【リーチ中】" if o.get("riichi") else "非リーチ"
+            o_melds = _melds_to_str(o.get("melds", []))
+            o_river = " ".join(_tile_ja(r.get("tile")) for r in o.get("river", [])) or "なし"
+            other_lines.append(
+                f"{rel_label}({o.get('score', '?')}点, {riichi_str}, 副露: {o_melds}, 河: {o_river})"
+            )
+
+        tehai_full = (
+            f"{closed_str} "
+            f"（自家: {my_wind} {my_score}点 / 自分の副露: {my_melds} / 自分の河: {my_river}"
+            + (f" / 他家状況: {' | '.join(other_lines)}" if other_lines else "")
+            + "）"
+        )
 
         return {
-            "kyoku": meta.get("kyoku", "不明"),
-            "turn": sit.get("turn", 0),
-            "tehai": tehai_str,
+            "kyoku": kyoku_str,
+            "turn": turn_str,
+            "tehai": tehai_full,
             "ai_discard": _choice_to_str(dec.get("ai_choice")),
             "ai_ev": dec.get("ai_pt_ev", 0.0) or 0.0,
             "player_discard": _choice_to_str(dec.get("player_choice")),

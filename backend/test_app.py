@@ -82,7 +82,41 @@ class MahjongCoachingBackendTestCase(unittest.TestCase):
             html_text = res.get_data(as_text=True)
             self.assertIn("牌譜検討", html_text)
             self.assertIn("東1局", html_text)
-            self.assertIn("AIからのアドバイス", html_text)
+            self.assertIn("マークの見方:", html_text)
+            self.assertIn("AIからのアドバイス（ワースト1）:", html_text)
+
+    def test_player_action_not_in_candidates_does_not_400(self):
+        if not self.sample_html_path.exists():
+            self.skipTest("Sample report.html not found")
+
+        with open(self.sample_html_path, "r", encoding="utf-8") as f:
+            sample_html = f.read()
+
+        # 候補表からプレイヤーの実際の打牌行(pai-w)を別の牌(pai-9p)に書き換え、候補外にする
+        modified_html = sample_html.replace(
+            "<tr><td>Discard <svg class=tile><use class=face href=#pai-w></use></svg><td>",
+            "<tr><td>Discard <svg class=tile><use class=face href=#pai-9p></use></svg><td>",
+            1
+        )
+
+        with patch("interactakochan.call_report", return_value=modified_html), \
+             patch("interactllm._generate_advice", return_value="【AIアドバイス】テスト"):
+            res = self.client.post(
+                "/analyze",
+                data={"input_data": "https://tenhou.net/0/?log=test", "seat": "0"},
+                headers={"Accept": "text/html"}
+            )
+            self.assertEqual(res.status_code, 200)
+            html_text = res.get_data(as_text=True)
+            self.assertIn("期待値差を算出できませんでした", html_text)
+
+    def test_invalid_text_input_returns_400(self):
+        res = self.client.post(
+            "/analyze",
+            data={"input_data": "not_a_url_and_not_json", "seat": "0"},
+            headers={"Accept": "text/html"}
+        )
+        self.assertEqual(res.status_code, 400)
 
 
 if __name__ == "__main__":

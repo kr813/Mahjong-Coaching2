@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 from flask import Flask, Response, jsonify, request, render_template, abort
@@ -50,17 +51,27 @@ def _execute_analysis():
     input_data = (request.form.get("input_data") or "").strip()
 
     if not source_type:
-        # 自動判定: input_data の内容、ファイル、クエリパラメータから推定
+        # 自動判定: クエリパラメータ → ファイル → input_data の内容から推定
         if request.args.get("url", "").strip():
             source_type = "url"
-        elif input_data:
-            # input_data がURL風なら "url"、そうでなければ "json" テキストとみなす
-            if input_data.startswith("http://") or input_data.startswith("https://"):
-                source_type = "url"
-            else:
-                source_type = "json"
         elif "file" in request.files and request.files["file"].filename:
             source_type = "file"
+        elif input_data:
+            try:
+                json.loads(input_data)
+                source_type = "json"
+            except json.JSONDecodeError:
+                if input_data.startswith("http://") or input_data.startswith("https://"):
+                    source_type = "url"
+                else:
+                    if _wants_html():
+                        return render_template(
+                            "error.html",
+                            error_code="400",
+                            error_title="不正なリクエストです",
+                            error_message="有効なURL（http:// または https://）または正しいJSONデータを入力してください。"
+                        ), 400
+                    return jsonify(error="input_data must be a valid URL or valid JSON"), 400
         elif request.is_json:
             source_type = "json"
         else:

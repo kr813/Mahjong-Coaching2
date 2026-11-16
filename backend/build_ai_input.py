@@ -49,9 +49,15 @@ def parse_action(s, ctx):
             a["riichi"] = True                   # 立直宣言つきの打牌
         return a
     if "Pon" in s:
-        return dict(type="pon", with_tiles=tiles[:2], then_discard=tiles[-1])
+        a = dict(type="pon", with_tiles=tiles[:2])
+        if len(tiles) >= 3:
+            a["then_discard"] = tiles[-1]
+        return a
     if "Chii" in s:
-        return dict(type="chi", with_tiles=tiles[:2], then_discard=tiles[-1])
+        a = dict(type="chi", with_tiles=tiles[:2])
+        if len(tiles) >= 3:
+            a["then_discard"] = tiles[-1]
+        return a
     if s.startswith("Kan"):
         t = tiles[0]
         if ctx["trigger"] == "opponent_discard":
@@ -98,7 +104,10 @@ def rel_melds(melds):
 
 
 def action_key(a):
-    return json.dumps(a, sort_keys=True)
+    norm = dict(a)
+    if "with_tiles" in norm and isinstance(norm["with_tiles"], list):
+        norm["with_tiles"] = sorted(norm["with_tiles"])
+    return json.dumps(norm, sort_keys=True)
 
 
 def build(html, viewer=None):
@@ -108,12 +117,9 @@ def build(html, viewer=None):
         viewer = int(meta_h.get("player id", 0))              # 自分の席（0〜3）
     engine = meta_h.get("AI engine", "Akochan")
     logs, groups = rts.load_kyoku_logs(soup), rts.report_groups(soup)
-    if len(logs) != len(groups):
-        raise ValueError(f"牌譜の局数({len(logs)})と、レポートの局見出し({len(groups)})が違います")
 
     result = []
-    for (heading, ents), k in zip(groups, logs):
-        rts.check_heading(heading, k)
+    for (heading, ents), k in rts.pair_groups_and_logs(groups, logs):
         snaps, _ = rts.simulate(k, viewer)
         for ent in ents:
             where = f"{heading} Turn {ent['turn']} (×{ent['wall']})"
@@ -138,10 +144,8 @@ def build(html, viewer=None):
                 raise ValueError(f"{where}: AIの行動と、候補の1行目が一致しません {ai} / {cands[0]['action']}")
             ai_ev = cands[0]
             pl_ev = next((c for c in cands if action_key(c["action"]) == action_key(player)), None)
-            pt_player = pl_ev["pt_ev"] if pl_ev else None        # Akochanが評価できなかった局面（表が N/A だけ）は null
+            pt_player = pl_ev["pt_ev"] if pl_ev else None        # Akochanが評価できなかった局面や候補外の行動は null
             pt_ai = ai_ev["pt_ev"]
-            if pl_ev is None and ai_ev["pt_ev"] is not None:
-                raise ValueError(f"{where}: 自分の行動 {player} が候補にありません")
 
             others = {}
             for rel in ("shimocha", "toimen", "kamicha"):
