@@ -7,11 +7,10 @@ from oci.generative_ai_agent_runtime.models import ChatDetails, CreateSessionDet
 logger = logging.getLogger(__name__)
 
 # AIエージェントのエンドポイントを入力
-AGENT_ENDPOINT_OCID = os.environ.get(
-    "OCI_GENAI_AGENT_ENDPOINT_OCID",
-    "ocid1.genaiagentendpoint.oc1.ap-osaka-1.amaaaaaapimhcliaxbtu4ubtsaab7sydtcj4cut2aqdshdhtwpgirrqqqrwq"
-)
-REGION = os.environ.get("OCI_REGION", "ap-osaka-1")
+AGENT_ENDPOINT_OCID = "ocid1.genaiagentendpoint.oc1.ap-osaka-1.amaaaaaapimhcliaxbtu4ubtsaab7sydtcj4cut2aqdshdhtwpgirrqqqrwq"
+REGION = "ap-osaka-1"
+
+_cached_client = None
 
 
 HONOR_JA = {"e": "東", "s": "南", "w": "西", "n": "北", "p": "白", "f": "發", "c": "中"}
@@ -101,26 +100,15 @@ def _format_record(rec: dict) -> dict:
         my_wind = WIND_JA.get(me.get("wind", ""), "")
         my_score = me.get("score")
         my_melds = _melds_to_str(me.get("melds", []))
-        my_river = " ".join(_tile_ja(r.get("tile")) for r in me.get("river", [])) or "なし"
 
-        other_lines = []
-        for rel_key, rel_label in REL_JA.items():
-            o = others.get(rel_key)
-            if not isinstance(o, dict):
-                continue
-            riichi_str = "【リーチ中】" if o.get("riichi") else "非リーチ"
-            o_melds = _melds_to_str(o.get("melds", []))
-            o_river = " ".join(_tile_ja(r.get("tile")) for r in o.get("river", [])) or "なし"
-            other_lines.append(
-                f"{rel_label}({o.get('score', '?')}点, {riichi_str}, 副露: {o_melds}, 河: {o_river})"
-            )
+        riichi_others = [
+            f"{ rel_label }リーチ中"
+            for rel_key, rel_label in REL_JA.items()
+            if isinstance(others.get(rel_key), dict) and others[rel_key].get("riichi")
+        ]
+        riichi_info = f" / 他家: {', '.join(riichi_others)}" if riichi_others else ""
 
-        tehai_full = (
-            f"{closed_str} "
-            f"（自家: {my_wind} {my_score}点 / 自分の副露: {my_melds} / 自分の河: {my_river}"
-            + (f" / 他家状況: {' | '.join(other_lines)}" if other_lines else "")
-            + "）"
-        )
+        tehai_full = f"{closed_str} （自家: {my_wind} {my_score}点 / 副露: {my_melds}{riichi_info}）"
 
         return {
             "kyoku": kyoku_str,
@@ -151,23 +139,27 @@ def _format_record(rec: dict) -> dict:
 
 
 def _get_client_and_signer():
-    """OCIクライアントを取得。InstancePrincipalsを優先し、無ければ ~/.oci/config を試す。"""
+    """OCIクライアントを取得（初回のみ生成してキャッシュ）。InstancePrincipalsを優先し、無ければ ~/.oci/config を試す。"""
+    global _cached_client
+    if _cached_client is not None:
+        return _cached_client
+
     try:
         signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-        client = GenerativeAiAgentRuntimeClient(
+        _cached_client = GenerativeAiAgentRuntimeClient(
             config={"region": REGION},
             signer=signer,
             service_endpoint=f"https://agent-runtime.generativeai.{REGION}.oci.oraclecloud.com"
         )
-        return client
+        return _cached_client
     except Exception:
         # ローカル環境の ~/.oci/config を試行
         config = oci.config.from_file()
-        client = GenerativeAiAgentRuntimeClient(
+        _cached_client = GenerativeAiAgentRuntimeClient(
             config=config,
             service_endpoint=f"https://agent-runtime.generativeai.{config.get('region', REGION)}.oci.oraclecloud.com"
         )
-        return client
+        return _cached_client
 
 
 def _generate_advice(parsed_data=None) -> str | None:
@@ -182,26 +174,37 @@ def _generate_advice(parsed_data=None) -> str | None:
     try:
         client = _get_client_and_signer()
 
-        # 1. セッション作成
-        session_response = client.create_session(
-            create_session_details=CreateSessionDetails(
-                display_name="mahjong-coaching-session",
-                description="mahjong coaching advice session"
-            ),
-            agent_endpoint_id=AGENT_ENDPOINT_OCID
-        )
-        session_id = session_response.data.id
+        # 1. セッション作成を試行（エンドポイント側でセッション無効の場合は session_id なしでチャット実行）
+        session_id = None
+        try:
+            session_response = client.create_session(
+                create_session_details=CreateSessionDetails(
+                    display_name="mahjong-coaching-session",
+                    description="mahjong coaching advice session"
+                ),
+                agent_endpoint_id=AGENT_ENDPOINT_OCID
+            )
+            session_id = session_response.data.id
+        except Exception as session_err:
+            print(f"[interactllm] create_session skipped/failed, trying sessionless chat: {session_err}", flush=True)
 
         # 2. チャット実行
+        chat_kwargs = {"user_message": text}
+        if session_id is not None:
+            chat_kwargs["session_id"] = session_id
+
         chat_response = client.chat(
             agent_endpoint_id=AGENT_ENDPOINT_OCID,
-            chat_details=ChatDetails(
-                user_message=text,
-                session_id=session_id
-            )
+            chat_details=ChatDetails(**chat_kwargs)
         )
-        return chat_response.data.message.content.text
+        msg = getattr(chat_response.data, "message", None)
+        content = getattr(msg, "content", None) if msg else None
+        advice_text = getattr(content, "text", None) if content else None
+        if not advice_text:
+            print(f"[interactllm WARNING] Empty response from OCI GenAI: {chat_response.data}", flush=True)
+        return advice_text
     except Exception as e:
+        print(f"[interactllm ERROR] OCI GenAI advice generation failed: {type(e).__name__}: {e}", flush=True)
         logger.warning("OCI GenAI advice generation skipped or failed: %s", e)
         return None
 
