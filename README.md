@@ -133,7 +133,13 @@ python backend/test_app.py
           "shanten_desc": "一向聴",
           "tiles": ["1m", "4m", "3s", "6s"],
           "remaining_count": 11,
-          "max_count": 14
+          "max_count": 14,
+          "details": [
+            {"tile": "1m", "remaining": 3, "max": 4},
+            {"tile": "4m", "remaining": 2, "max": 4},
+            {"tile": "3s", "remaining": 3, "max": 3},
+            {"tile": "6s", "remaining": 3, "max": 3}
+          ]
         }
       },
       "ai_choice": {

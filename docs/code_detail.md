@@ -404,7 +404,13 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
           "shanten_desc": "一向聴",
           "tiles": ["1m", "4m", "3s", "6s"],
           "remaining_count": 11,
-          "max_count": 14
+          "max_count": 14,
+          "details": [
+            {"tile": "1m", "remaining": 3, "max": 4},
+            {"tile": "4m", "remaining": 2, "max": 4},
+            {"tile": "3s", "remaining": 3, "max": 3},
+            {"tile": "6s", "remaining": 3, "max": 3}
+          ]
         }
       },
       "ai_choice": {
@@ -479,6 +485,7 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 | `tiles` | `list[string]` | ツモるとシャンテン数が1進む有効牌のリスト（例: `["1m", "4m"]`） |
 | `remaining_count` | `int` | 実戦の場見え（自他家の河・副露、自手牌、ドラ表示牌）を差し引いた山残り枚数合計 |
 | `max_count` | `int` | 手牌外の理論上の最大受け入れ枚数合計（各牌 `4 - 手牌内枚数`） |
+| `details` | `list[object]` | 有効牌ごとの内訳配列（各牌の `tile`, `remaining`, `max`） |
 
 ---
 

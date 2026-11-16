@@ -76,6 +76,12 @@ class MahjongCoachingBackendTestCase(unittest.TestCase):
                 self.assertIsInstance(acc["tiles"], list)
                 self.assertIsInstance(acc["remaining_count"], int)
                 self.assertIsInstance(acc["max_count"], int)
+                self.assertIn("details", acc)
+                self.assertIsInstance(acc["details"], list)
+                if acc["details"]:
+                    self.assertIn("tile", acc["details"][0])
+                    self.assertIn("remaining", acc["details"][0])
+                    self.assertIn("max", acc["details"][0])
             if ai_choice.get("type") == "discard":
                 self.assertIn("acceptance", ai_choice)
                 self.assertIsNotNone(ai_choice["acceptance"])
@@ -149,6 +155,8 @@ class MahjongCoachingBackendTestCase(unittest.TestCase):
         self.assertIn("3s", res["tiles"])
         self.assertEqual(res["max_count"], 4)
         self.assertEqual(res["remaining_count"], 3)
+        self.assertIn("details", res)
+        self.assertEqual(res["details"], [{"tile": "3s", "remaining": 3, "max": 4}])
 
         # 一向聴手牌
         hand_1shanten = ["1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "1p", "1p", "2s", "4s", "9p"]

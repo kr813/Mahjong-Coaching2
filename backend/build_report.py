@@ -75,6 +75,8 @@ def validate_acceptance(acc: Any, path: str) -> dict[str, Any] | None:
             raise ValueError(f"{path}.{key} は整数にしてください: {acc[key]!r}")
     if "tiles" in acc and not isinstance(acc["tiles"], list):
         raise ValueError(f"{path}.tiles は配列にしてください: {acc['tiles']!r}")
+    if "details" in acc and not isinstance(acc["details"], list):
+        raise ValueError(f"{path}.details は配列にしてください: {acc['details']!r}")
     return acc
 
 

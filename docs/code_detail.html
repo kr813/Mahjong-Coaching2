@@ -580,7 +580,13 @@ sequenceDiagram
           &quot;shanten_desc&quot;: &quot;一向聴&quot;,
           &quot;tiles&quot;: [&quot;1m&quot;, &quot;4m&quot;, &quot;3s&quot;, &quot;6s&quot;],
           &quot;remaining_count&quot;: 11,
-          &quot;max_count&quot;: 14
+          &quot;max_count&quot;: 14,
+          &quot;details&quot;: [
+            {&quot;tile&quot;: &quot;1m&quot;, &quot;remaining&quot;: 3, &quot;max&quot;: 4},
+            {&quot;tile&quot;: &quot;4m&quot;, &quot;remaining&quot;: 2, &quot;max&quot;: 4},
+            {&quot;tile&quot;: &quot;3s&quot;, &quot;remaining&quot;: 3, &quot;max&quot;: 3},
+            {&quot;tile&quot;: &quot;6s&quot;, &quot;remaining&quot;: 3, &quot;max&quot;: 3}
+          ]
         }
       },
       &quot;ai_choice&quot;: {
@@ -680,6 +686,11 @@ sequenceDiagram
 <td><code>max_count</code></td>
 <td><code>int</code></td>
 <td>手牌外の理論上の最大受け入れ枚数合計（各牌 <code>4 - 手牌内枚数</code>）</td>
+</tr>
+<tr>
+<td><code>details</code></td>
+<td><code>list[object]</code></td>
+<td>有効牌ごとの内訳配列（各牌の <code>tile</code>, <code>remaining</code>, <code>max</code>）</td>
 </tr>
 </tbody>
 </table>

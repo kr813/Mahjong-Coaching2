@@ -159,6 +159,7 @@ def calculate_acceptance(
     vis_base_counts = Counter(tile_base(t) for t in (visible_tiles or []))
 
     effective_tiles: list[str] = []
+    details: list[dict[str, Any]] = []
     remaining_count = 0
     max_count = 0
 
@@ -175,6 +176,11 @@ def calculate_acceptance(
             visible = vis_base_counts.get(t_base, 0)
             tile_rem = max(0, 4 - visible)
 
+            details.append({
+                "tile": t,
+                "remaining": tile_rem,
+                "max": tile_max,
+            })
             max_count += tile_max
             remaining_count += tile_rem
 
@@ -184,6 +190,7 @@ def calculate_acceptance(
         "tiles": effective_tiles,
         "remaining_count": remaining_count,
         "max_count": max_count,
+        "details": details,
     }
 
 

@@ -31,6 +31,23 @@ def _tile_ja(code: str | None) -> str:
     return str(code)
 
 
+def _acceptance_to_str(acc: dict | None) -> str:
+    if not isinstance(acc, dict) or acc.get("remaining_count") is None:
+        return "なし"
+    sh_desc = acc.get("shanten_desc") or f"{acc.get('shanten', '')}向聴"
+    rem_total = acc.get("remaining_count", 0)
+    details = acc.get("details", [])
+    if details:
+        breakdown_parts = [f"{_tile_ja(d['tile'])}:{d.get('remaining', 0)}枚" for d in details]
+        breakdown_str = f" [内訳: {', '.join(breakdown_parts)}]"
+    elif acc.get("tiles"):
+        tiles_str = ", ".join(_tile_ja(t) for t in acc["tiles"])
+        breakdown_str = f" [有効牌: {tiles_str}]"
+    else:
+        breakdown_str = ""
+    return f"{sh_desc}（受け入れ: {rem_total}枚{breakdown_str}）"
+
+
 def _choice_to_str(choice: dict | str | None) -> str:
     if isinstance(choice, dict):
         action_type = choice.get("type", "")
@@ -39,7 +56,13 @@ def _choice_to_str(choice: dict | str | None) -> str:
         acc_str = ""
         if isinstance(acc, dict) and acc.get("remaining_count") is not None:
             sh_desc = acc.get("shanten_desc") or f"{acc.get('shanten', '')}向聴"
-            acc_str = f" [{sh_desc} / 受け入れ{acc.get('remaining_count')}枚]"
+            rem = acc.get("remaining_count", 0)
+            details = acc.get("details", [])
+            if details:
+                parts = [f"{_tile_ja(d['tile'])}:{d.get('remaining', 0)}枚" for d in details]
+                acc_str = f" [{sh_desc} / 受け入れ{rem}枚: {', '.join(parts)}]"
+            else:
+                acc_str = f" [{sh_desc} / 受け入れ{rem}枚]"
         if action_type == "discard":
             riichi = " 立直" if choice.get("riichi") else ""
             res = f"打 {tile}{riichi}" if tile else "打牌"
@@ -138,6 +161,9 @@ def _format_record(rec: dict) -> dict:
         loss_val = dec.get("loss")
         loss_str = f"{abs(loss_val):.5f}" if isinstance(loss_val, (int, float)) else "算出不可"
 
+        pl_acc_str = _acceptance_to_str(dec.get("player_choice", {}).get("acceptance") if isinstance(dec.get("player_choice"), dict) else None)
+        ai_acc_str = _acceptance_to_str(dec.get("ai_choice", {}).get("acceptance") if isinstance(dec.get("ai_choice"), dict) else None)
+
         return {
             "kyoku": kyoku_str,
             "dora": dora_str,
@@ -150,8 +176,10 @@ def _format_record(rec: dict) -> dict:
             "others_info": others_str,
             "ai_discard": ai_choice_str,
             "ai_ev": ai_ev_str,
+            "ai_acceptance": ai_acc_str,
             "player_discard": pl_choice_str,
             "player_ev": pl_ev_str,
+            "player_acceptance": pl_acc_str,
             "loss": loss_str,
         }
 
@@ -174,8 +202,10 @@ def _format_record(rec: dict) -> dict:
         "others_info": "情報なし",
         "ai_discard": max_loss_turn.get("ai_discard", "不明"),
         "ai_ev": str(max_loss_turn.get("ai_ev", 0.0)),
+        "ai_acceptance": "なし",
         "player_discard": max_loss_turn.get("player_discard", "不明"),
         "player_ev": str(max_loss_turn.get("player_ev", 0.0)),
+        "player_acceptance": "なし",
         "loss": "不明",
     }
 
