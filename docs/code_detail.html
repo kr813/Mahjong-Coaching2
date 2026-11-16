@@ -289,14 +289,13 @@ sequenceDiagram
     RTS-->>BAI: 局面スナップショット
     BAI->>BAI: 候補手構造化
     BAI-->>Utils: 全局面データ配列
-    loop 各局面
-        opt 期待値差 >= 0.15
-            Utils->>LLM: _generate_advice
-            LLM->>OCI: セッション作成 & 質問
-            OCI-->>LLM: コーチングアドバイス
-            LLM-->>Utils: アドバイス文
-            Utils->>Utils: commentary 付与
-        end
+    Utils->>Utils: 期待値差ワースト5局面を算出 (worst_ranks)
+    loop ワースト5の各局面
+        Utils->>LLM: _generate_advice
+        LLM->>OCI: セッション作成 & 質問
+        OCI-->>LLM: コーチングアドバイス
+        LLM-->>Utils: アドバイス文
+        Utils->>Utils: commentary 付与
     end
     Utils->>Utils: data.json 保存
     Utils-->>App: records 配列
@@ -352,11 +351,11 @@ sequenceDiagram
 <li><strong><code>source_type</code>（データ種別）</strong>:</li>
 <li>明示指定がない場合、以下の優先順位で自動判定：<ol>
 <li>クエリパラメータ <code>url</code> が存在 → <code>"url"</code></li>
-<li><code>input_data</code> が <code>http://</code> または <code>https://</code> で開始 → <code>"url"</code></li>
-<li><code>input_data</code> が入力されている → <code>"json"</code></li>
 <li>リクエストにファイルが添付されている → <code>"file"</code></li>
+<li><code>input_data</code> が有効な JSON としてパース可能 → <code>"json"</code></li>
+<li><code>input_data</code> が <code>http://</code> または <code>https://</code> で開始 → <code>"url"</code></li>
 <li>リクエストが JSON (<code>request.is_json</code>) → <code>"json"</code></li>
-<li>いずれも該当しない場合 → <code>400 Bad Request</code></li>
+<li>いずれも該当しない場合（不正文字列や空入力） → <code>400 Bad Request</code></li>
 </ol>
 </li>
 <li><strong><code>format</code>（レスポンス形式）</strong>:</li>
@@ -379,9 +378,9 @@ sequenceDiagram
 <li><code>url</code>, <code>file_content</code>, <code>json_body</code>: ソースデータ</li>
 <li><code>generate_advice</code>: LLM アドバイス生成を行うフラグ（デフォルト: <code>True</code>）</li>
 <li><strong>処理フロー</strong>:</li>
-<li><code>interactakochan.call_report()</code> を実行して HTML レポートを取得（file/json の場合は一時ファイルを作成）。</li>
+<li><code>file</code> / <code>json</code> 入力時は JSON 形式の妥当性を事前検証し、<code>with tempfile.NamedTemporaryFile(...)</code> で一時ファイルを作成した上で <code>interactakochan.call_report()</code> を実行して HTML レポートを取得。</li>
 <li><code>build_ai_input.build(report_html, viewer=seat)</code> を実行し、局面オブジェクトの配列（<code>records</code>）を生成。</li>
-<li><code>generate_advice=True</code> の場合、各局面の <code>loss</code> をチェックし、<code>abs(loss) &gt;= 0.15</code> の局面に対して <code>interactllm._generate_advice(rec)</code> を呼び出し、戻り値を <code>rec["commentary"]</code> に代入。</li>
+<li><code>generate_advice=True</code> の場合、<code>build_report.worst_ranks()</code> で期待値差（<code>abs(loss)</code>）が大きい順ワースト5の局面を特定し、該当局面に対して <code>interactllm._generate_advice(rec)</code> を呼び出して戻り値を <code>rec["commentary"]</code> に代入。</li>
 <li>生成された <code>records</code> をローカルの <code>data.json</code> に書き出し（確認用）。</li>
 <li><code>finally</code> 句で一時ファイルを確実に削除。</li>
 </ul>
@@ -393,14 +392,15 @@ sequenceDiagram
 <li><strong><code>build(html, viewer=None)</code></strong>:</li>
 <li>HTML を BeautifulSoup（<code>lxml</code> パーサー）で解析。</li>
 <li>メタデータ欄から <code>player id</code>（デフォルト: <code>viewer</code> または 0）と <code>AI engine</code> 名を取得。</li>
-<li>レポート内の各局ブロック（<code>report_groups</code>）と、埋め込み天鳳 JSON（<code>load_kyoku_logs</code>）の局数が一致することを検証。</li>
+<li>レポート内の各局ブロック（<code>report_groups</code>）と埋め込み天鳳 JSON（<code>load_kyoku_logs</code>）を <code>pair_groups_and_logs()</code> により <code>[局番号, 本場]</code> 順で対応付け（判断局面が0件の局があっても安全にスキップ）。</li>
 <li>局ごとに <code>reconstruct_table_state.simulate()</code> を呼び出し、全巡目のスナップショット（手牌・河・副露）を生成。</li>
 <li>HTML 内の <code>details.entry</code>（各局面）とスナップショットを突き合わせ、以下の整合性チェックを実施：<ul>
 <li><strong>手牌照合</strong>: 復元手牌とレポート表示手牌が完全一致するか</li>
 <li><strong>副露照合</strong>: 復元副露とレポート表示副露が完全一致するか</li>
-<li><strong>AI手照合</strong>: 候補手テーブルの第1行目と AI 推奨行動が一致するか</li>
+<li><strong>AI手照合</strong>: 候補手テーブルの第1行目と AI 推奨行動が一致するか（<code>action_key()</code> で <code>with_tiles</code> の並び順も正規化）</li>
 </ul>
 </li>
+<li>プレイヤーの実際の選択が候補表に含まれない局面では、エラーとせず <code>player_pt_ev: null</code>・<code>loss: null</code> として記録。</li>
 <li><strong><code>parse_action(s, ctx)</code></strong>:</li>
 <li>文字列表記の行動（<code>Discard [2m]</code>, <code>Discard Riichi [4s]</code>, <code>[c] [c] Pon, cut [9s]</code>, <code>Kan [w]</code> 等）を構造化オブジェクトに変換。</li>
 <li>カンの場合、文脈（<code>trigger</code> が <code>draw</code> か <code>opponent_discard</code> か、既にポンしているか）に応じて <code>daiminkan</code> / <code>kakan</code> / <code>ankan</code> を自動判別。</li>
@@ -442,13 +442,13 @@ sequenceDiagram
 2. 失敗した場合、ローカルの <code>~/.oci/config</code>（CLI 認証プロファイル）の読み込みを試行。
 3. いずれの認証も失敗した場合は例外をキャッチし、ログに警告（<code>logger.warning</code>）を出力した上で <code>None</code> を返却（<code>commentary: null</code> として安全に継続）。</p>
 <h4 id="_8">プロンプト入力データフォーマット</h4>
-<p>新形式の局面レコード（<code>rec</code>）から以下の変数を抽出・整形して <code>prompt.txt</code> のテンプレートに流し込みます：
-- <code>{kyoku}</code>: 局名（例: <code>"東1局"</code>）
-- <code>{turn}</code>: 巡目（例: <code>8</code>）
-- <code>{tehai}</code>: 手牌一覧（例: <code>"1m 2m 2m 3m 4m 3s 4s 5s 8s 9s e w c 8m"</code>）
-- <code>{ai_discard}</code>: AI推奨手（例: <code>"打 e"</code>）
+<p>新形式の局面レコード（<code>rec</code>）から牌コードを日本語表記（<code>1萬</code>・<code>赤5筒</code>・<code>東</code>・<code>南</code>・<code>白</code> 等）に整形し、卓状況を含めて <code>prompt.txt</code> のテンプレートに流し込みます：
+- <code>{kyoku}</code>: 局・本場・供託・ドラ表示牌（例: <code>"東1局 0本場 (供託0本 / ドラ表示牌: 東)"</code>）
+- <code>{turn}</code>: 巡目およびきっかけ牌（例: <code>"8 (自摸: 6筒)"</code> または <code>"5 (下家の打牌: 中)"</code>）
+- <code>{tehai}</code>: 門前手牌、自風・持ち点、自分の副露・河、および他家3人（下家・対面・上家）の持ち点・リーチ状態・副露・河
+- <code>{ai_discard}</code>: AI推奨手（例: <code>"打 東"</code>）
 - <code>{ai_ev}</code>: AI手の期待値（例: <code>-0.87562</code>）
-- <code>{player_discard}</code>: プレイヤーの選択手（例: <code>"打 w"</code>）
+- <code>{player_discard}</code>: プレイヤーの選択手（例: <code>"打 西"</code>）
 - <code>{player_ev}</code>: プレイヤー選択の期待値（例: <code>-0.90394</code>）</p>
 <hr />
 <h3 id="47-build_reportpy">4.7 <code>build_report.py</code> — 画面用ビューモデル生成モジュール</h3>
@@ -457,16 +457,17 @@ sequenceDiagram
 <ol>
 <li><strong><code>build_report(records)</code></strong>:</li>
 <li>局情報（<code>meta.kyoku</code>, <code>meta.honba</code>）から局ごとのブロック（<code>kyokus</code>）およびアンカー ID を生成。</li>
-<li>各局面のメタデータ集計（局数、局面数、AI一致率、注意局面数）を算出し、サマリー欄を構築。</li>
+<li><code>worst_ranks()</code> により半荘全体で期待値差（<code>loss</code> の絶対値）が大きい順ワースト5（<code>ADVICE_WORST_N = 5</code>）の局面順位を算出。</li>
+<li>各局面のメタデータ集計（局数、局面数、AI一致率、注意局面数、AIアドバイス対象件数）およびマーク定義（<code>marks</code>: ワースト5 <code>⚠️</code> / 注意局面 <code>😕</code>）を構築。</li>
 <li><strong><code>rivers_view(rec)</code></strong>:</li>
 <li>自家および他家（下家・対面・上家）の河情報を表示用に成形（1行6枚単位で分割）。</li>
 <li>立直宣言牌（<code>riichi</code>）、ツモ切り（<code>tsumogiri</code>）、他家に鳴かれた牌（<code>called_by</code>）のフラグおよびツールチップ説明文（<code>note</code>）を付与。</li>
 <li><strong><code>meld_view(meld)</code></strong>:</li>
 <li>副露牌の並び順と横向き（<code>rotated</code>）位置を、鳴き元の相対席（<code>上家</code>/<code>対面</code>/<code>下家</code>）に応じて正確に配置。</li>
 <li>加槓（<code>kakan</code>）時にポン牌の上に4枚目を重ねて表示する構造（<code>added</code>）に対応。</li>
-<li><strong><code>entry_view(rec, threshold)</code></strong>:</li>
+<li><strong><code>entry_view(rec, threshold, worst_rank=None)</code></strong>:</li>
 <li>きっかけ牌（ツモ牌、または他家の打牌）を手牌末尾に分離して配置。</li>
-<li>期待値差（<code>loss</code>）の絶対値が閾値（<code>0.15</code>）以上の場合に <code>is_warning=True</code>（⚠️ 表示およびアコーディオン自動展開）を設定。</li>
+<li>期待値差（<code>loss</code>）の絶対値が閾値（<code>0.15</code>）以上の場合に <code>is_warning=True</code>（😕 表示）、ワースト5に入る場合に <code>worst_rank=1〜5</code>（⚠️ 表示およびAIアドバイス欄表示）を設定。</li>
 <li><strong>牌コード検証 (<code>VALID_TILES</code>)</strong>:</li>
 <li><code>1m</code>〜<code>9m</code>, <code>1p</code>〜<code>9p</code>, <code>1s</code>〜<code>9s</code>, 赤ドラ（<code>5mr</code>, <code>5pr</code>, <code>5sr</code>）, 字牌（<code>e</code>, <code>s</code>, <code>w</code>, <code>n</code>, <code>p</code>, <code>f</code>, <code>c</code>）の有効性を網羅。</li>
 </ol>
@@ -480,8 +481,9 @@ sequenceDiagram
 <li>クライアント側バリデーション（空送信防止）およびエラーメッセージ表示を内蔵。</li>
 <li><strong><code>result_manyhands.html</code></strong>:</li>
 <li>全局・全局面のアコーディオン形式レポート表示画面。</li>
+<li>上部にマークの見方（<code>⚠️</code>＝期待値差ワースト5（AIアドバイスあり）／<code>😕</code>＝期待値差 0.15 以上）および河の見方の凡例を表示。</li>
 <li>4家の河表示（立直宣言牌の回転、ツモ切り青下線、鳴かれ牌の透過表示）、手牌・副露の完全再現。</li>
-<li>損失期待値（<code>loss</code>）の大きい局面への警告表示（⚠️ マーク、背景色ハイライト）および AI による詳細コーチングアドバイス表示枠。</li>
+<li>期待値差ワースト5の局面に「AIからのアドバイス（ワースト1〜5）」枠を表示。</li>
 <li><strong><code>error.html</code></strong>:</li>
 <li>400（不正なリクエスト）、404（ページ見つかりません）、500（サーバー・解析エンジンエラー）を共通で美しく表示する統一エラー画面。</li>
 </ul>
@@ -491,9 +493,11 @@ sequenceDiagram
 <ul>
 <li><code>test_invalid_seat</code>: 不正な席番号（例: <code>seat=5</code>）に対して HTTP 400 が返ることを検証。</li>
 <li><code>test_empty_request</code>: 入力データが空の場合に HTTP 400 が返ることを検証。</li>
+<li><code>test_invalid_text_input_returns_400</code>: URLでも有効なJSONでもない文字列に対して HTTP 400 が返ることを検証。</li>
 <li><code>test_index_page</code>: ルート (<code>/</code>) への GET リクエストで入力フォーム画面（<code>index.html</code>）が正常に返ることを検証。</li>
 <li><code>test_successful_analysis_json_format</code>: 実サンプル HTML レポート（<code>test_report.html</code>）を入力とし、<code>POST /api/analyze</code> が 200 OK で新仕様の全フィールド（<code>meta</code>, <code>situation</code>, <code>self</code>, <code>others</code>, <code>hidden_info</code>, <code>decision</code>, <code>commentary</code>）を含む JSON 配列を返すことを検証。</li>
 <li><code>test_successful_analysis_html_format</code>: ブラウザアクセス時（<code>Accept: text/html</code>）に <code>POST /analyze</code> が 200 OK で新仕様レポート画面（<code>result_manyhands.html</code>）を正常にレンダリングすることを検証。</li>
+<li><code>test_player_action_not_in_candidates_does_not_400</code>: プレイヤーの実際の選択が Akochan の候補表に無い局面でも 400 エラーにならず、「期待値差を算出できませんでした」として 200 OK で描画されることを検証。</li>
 </ul>
 <hr />
 <h2 id="5-ai-input-format">5. データスキーマ仕様 (<code>ai-input-format</code>)</h2>
@@ -581,7 +585,7 @@ sequenceDiagram
         }
       ]
     },
-    &quot;commentary&quot;: &quot;（loss &gt;= 0.15 の局面に付与されるアドバイス文。それ以外は null）&quot;
+    &quot;commentary&quot;: &quot;（期待値差の大きい順ワースト5の局面に付与されるアドバイス文。それ以外は null）&quot;
   }
 ]
 </code></pre>

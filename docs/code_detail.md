@@ -114,14 +114,13 @@ sequenceDiagram
     RTS-->>BAI: 局面スナップショット
     BAI->>BAI: 候補手構造化
     BAI-->>Utils: 全局面データ配列
-    loop 各局面
-        opt 期待値差 >= 0.15
-            Utils->>LLM: _generate_advice
-            LLM->>OCI: セッション作成 & 質問
-            OCI-->>LLM: コーチングアドバイス
-            LLM-->>Utils: アドバイス文
-            Utils->>Utils: commentary 付与
-        end
+    Utils->>Utils: 期待値差ワースト5局面を算出 (worst_ranks)
+    loop ワースト5の各局面
+        Utils->>LLM: _generate_advice
+        LLM->>OCI: セッション作成 & 質問
+        OCI-->>LLM: コーチングアドバイス
+        LLM-->>Utils: アドバイス文
+        Utils->>Utils: commentary 付与
     end
     Utils->>Utils: data.json 保存
     Utils-->>App: records 配列
@@ -153,11 +152,11 @@ HTTP リクエストのハンドリング、パラメータ抽出・バリデー
 2. **`source_type`（データ種別）**:
    - 明示指定がない場合、以下の優先順位で自動判定：
      1. クエリパラメータ `url` が存在 → `"url"`
-     2. `input_data` が `http://` または `https://` で開始 → `"url"`
-     3. `input_data` が入力されている → `"json"`
-     4. リクエストにファイルが添付されている → `"file"`
+     2. リクエストにファイルが添付されている → `"file"`
+     3. `input_data` が有効な JSON としてパース可能 → `"json"`
+     4. `input_data` が `http://` または `https://` で開始 → `"url"`
      5. リクエストが JSON (`request.is_json`) → `"json"`
-     6. いずれも該当しない場合 → `400 Bad Request`
+     6. いずれも該当しない場合（不正文字列や空入力） → `400 Bad Request`
 3. **`format`（レスポンス形式）**:
    - `format=html` またはブラウザ通常アクセス（`Accept: text/html`）の場合、[result_manyhands.html](file:///c:/Users/champ/ぶんかかい/Mahjong-Coaching2/backend/templates/result_manyhands.html) をレンダリング。
    - API リクエスト（`/api/analyze` または `Accept: application/json`、`format=json`）の場合は新仕様の局面 JSON 配列（`application/json`）を返却。
@@ -180,9 +179,9 @@ Akochan 呼び出し、データ構築、LLM アドバイス付与、一時フ�
   - `url`, `file_content`, `json_body`: ソースデータ
   - `generate_advice`: LLM アドバイス生成を行うフラグ（デフォルト: `True`）
 - **処理フロー**:
-  1. `interactakochan.call_report()` を実行して HTML レポートを取得（file/json の場合は一時ファイルを作成）。
+  1. `file` / `json` 入力時は JSON 形式の妥当性を事前検証し、`with tempfile.NamedTemporaryFile(...)` で一時ファイルを作成した上で `interactakochan.call_report()` を実行して HTML レポートを取得。
   2. `build_ai_input.build(report_html, viewer=seat)` を実行し、局面オブジェクトの配列（`records`）を生成。
-  3. `generate_advice=True` の場合、各局面の `loss` をチェックし、`abs(loss) >= 0.15` の局面に対して `interactllm._generate_advice(rec)` を呼び出し、戻り値を `rec["commentary"]` に代入。
+  3. `generate_advice=True` の場合、`build_report.worst_ranks()` で期待値差（`abs(loss)`）が大きい順ワースト5の局面を特定し、該当局面に対して `interactllm._generate_advice(rec)` を呼び出して戻り値を `rec["commentary"]` に代入。
   4. 生成された `records` をローカルの `data.json` に書き出し（確認用）。
   5. `finally` 句で一時ファイルを確実に削除。
 
@@ -197,12 +196,13 @@ Akochan レポート HTML をパースし、各局面の評価値・候補手表
 1. **`build(html, viewer=None)`**:
    - HTML を BeautifulSoup（`lxml` パーサー）で解析。
    - メタデータ欄から `player id`（デフォルト: `viewer` または 0）と `AI engine` 名を取得。
-   - レポート内の各局ブロック（`report_groups`）と、埋め込み天鳳 JSON（`load_kyoku_logs`）の局数が一致することを検証。
+   - レポート内の各局ブロック（`report_groups`）と埋め込み天鳳 JSON（`load_kyoku_logs`）を `pair_groups_and_logs()` により `[局番号, 本場]` 順で対応付け（判断局面が0件の局があっても安全にスキップ）。
    - 局ごとに `reconstruct_table_state.simulate()` を呼び出し、全巡目のスナップショット（手牌・河・副露）を生成。
    - HTML 内の `details.entry`（各局面）とスナップショットを突き合わせ、以下の整合性チェックを実施：
      - **手牌照合**: 復元手牌とレポート表示手牌が完全一致するか
      - **副露照合**: 復元副露とレポート表示副露が完全一致するか
-     - **AI手照合**: 候補手テーブルの第1行目と AI 推奨行動が一致するか
+     - **AI手照合**: 候補手テーブルの第1行目と AI 推奨行動が一致するか（`action_key()` で `with_tiles` の並び順も正規化）
+   - プレイヤーの実際の選択が候補表に含まれない局面では、エラーとせず `player_pt_ev: null`・`loss: null` として記録。
 2. **`parse_action(s, ctx)`**:
    - 文字列表記の行動（`Discard [2m]`, `Discard Riichi [4s]`, `[c] [c] Pon, cut [9s]`, `Kan [w]` 等）を構造化オブジェクトに変換。
    - カンの場合、文脈（`trigger` が `draw` か `opponent_discard` か、既にポンしているか）に応じて `daiminkan` / `kakan` / `ankan` を自動判別。
@@ -253,13 +253,13 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 3. いずれの認証も失敗した場合は例外をキャッチし、ログに警告（`logger.warning`）を出力した上で `None` を返却（`commentary: null` として安全に継続）。
 
 #### プロンプト入力データフォーマット
-新形式の局面レコード（`rec`）から以下の変数を抽出・整形して `prompt.txt` のテンプレートに流し込みます：
-- `{kyoku}`: 局名（例: `"東1局"`）
-- `{turn}`: 巡目（例: `8`）
-- `{tehai}`: 手牌一覧（例: `"1m 2m 2m 3m 4m 3s 4s 5s 8s 9s e w c 8m"`）
-- `{ai_discard}`: AI推奨手（例: `"打 e"`）
+新形式の局面レコード（`rec`）から牌コードを日本語表記（`1萬`・`赤5筒`・`東`・`南`・`白` 等）に整形し、卓状況を含めて `prompt.txt` のテンプレートに流し込みます：
+- `{kyoku}`: 局・本場・供託・ドラ表示牌（例: `"東1局 0本場 (供託0本 / ドラ表示牌: 東)"`）
+- `{turn}`: 巡目およびきっかけ牌（例: `"8 (自摸: 6筒)"` または `"5 (下家の打牌: 中)"`）
+- `{tehai}`: 門前手牌、自風・持ち点、自分の副露・河、および他家3人（下家・対面・上家）の持ち点・リーチ状態・副露・河
+- `{ai_discard}`: AI推奨手（例: `"打 東"`）
 - `{ai_ev}`: AI手の期待値（例: `-0.87562`）
-- `{player_discard}`: プレイヤーの選択手（例: `"打 w"`）
+- `{player_discard}`: プレイヤーの選択手（例: `"打 西"`）
 - `{player_ev}`: プレイヤー選択の期待値（例: `-0.90394`）
 
 ---
@@ -271,16 +271,17 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 #### 主要機能
 1. **`build_report(records)`**:
    - 局情報（`meta.kyoku`, `meta.honba`）から局ごとのブロック（`kyokus`）およびアンカー ID を生成。
-   - 各局面のメタデータ集計（局数、局面数、AI一致率、注意局面数）を算出し、サマリー欄を構築。
+   - `worst_ranks()` により半荘全体で期待値差（`loss` の絶対値）が大きい順ワースト5（`ADVICE_WORST_N = 5`）の局面順位を算出。
+   - 各局面のメタデータ集計（局数、局面数、AI一致率、注意局面数、AIアドバイス対象件数）およびマーク定義（`marks`: ワースト5 `⚠️` / 注意局面 `😕`）を構築。
 2. **`rivers_view(rec)`**:
    - 自家および他家（下家・対面・上家）の河情報を表示用に成形（1行6枚単位で分割）。
    - 立直宣言牌（`riichi`）、ツモ切り（`tsumogiri`）、他家に鳴かれた牌（`called_by`）のフラグおよびツールチップ説明文（`note`）を付与。
 3. **`meld_view(meld)`**:
    - 副露牌の並び順と横向き（`rotated`）位置を、鳴き元の相対席（`上家`/`対面`/`下家`）に応じて正確に配置。
    - 加槓（`kakan`）時にポン牌の上に4枚目を重ねて表示する構造（`added`）に対応。
-4. **`entry_view(rec, threshold)`**:
+4. **`entry_view(rec, threshold, worst_rank=None)`**:
    - きっかけ牌（ツモ牌、または他家の打牌）を手牌末尾に分離して配置。
-   - 期待値差（`loss`）の絶対値が閾値（`0.15`）以上の場合に `is_warning=True`（⚠️ 表示およびアコーディオン自動展開）を設定。
+   - 期待値差（`loss`）の絶対値が閾値（`0.15`）以上の場合に `is_warning=True`（😕 表示）、ワースト5に入る場合に `worst_rank=1〜5`（⚠️ 表示およびAIアドバイス欄表示）を設定。
 5. **牌コード検証 (`VALID_TILES`)**:
    - `1m`〜`9m`, `1p`〜`9p`, `1s`〜`9s`, 赤ドラ（`5mr`, `5pr`, `5sr`）, 字牌（`e`, `s`, `w`, `n`, `p`, `f`, `c`）の有効性を網羅。
 
@@ -296,8 +297,9 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
   - クライアント側バリデーション（空送信防止）およびエラーメッセージ表示を内蔵。
 - **`result_manyhands.html`**:
   - 全局・全局面のアコーディオン形式レポート表示画面。
+  - 上部にマークの見方（`⚠️`＝期待値差ワースト5（AIアドバイスあり）／`😕`＝期待値差 0.15 以上）および河の見方の凡例を表示。
   - 4家の河表示（立直宣言牌の回転、ツモ切り青下線、鳴かれ牌の透過表示）、手牌・副露の完全再現。
-  - 損失期待値（`loss`）の大きい局面への警告表示（⚠️ マーク、背景色ハイライト）および AI による詳細コーチングアドバイス表示枠。
+  - 期待値差ワースト5の局面に「AIからのアドバイス（ワースト1〜5）」枠を表示。
 - **`error.html`**:
   - 400（不正なリクエスト）、404（ページ見つかりません）、500（サーバー・解析エンジンエラー）を共通で美しく表示する統一エラー画面。
 
@@ -309,9 +311,11 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 
 - `test_invalid_seat`: 不正な席番号（例: `seat=5`）に対して HTTP 400 が返ることを検証。
 - `test_empty_request`: 入力データが空の場合に HTTP 400 が返ることを検証。
+- `test_invalid_text_input_returns_400`: URLでも有効なJSONでもない文字列に対して HTTP 400 が返ることを検証。
 - `test_index_page`: ルート (`/`) への GET リクエストで入力フォーム画面（`index.html`）が正常に返ることを検証。
 - `test_successful_analysis_json_format`: 実サンプル HTML レポート（`test_report.html`）を入力とし、`POST /api/analyze` が 200 OK で新仕様の全フィールド（`meta`, `situation`, `self`, `others`, `hidden_info`, `decision`, `commentary`）を含む JSON 配列を返すことを検証。
 - `test_successful_analysis_html_format`: ブラウザアクセス時（`Accept: text/html`）に `POST /analyze` が 200 OK で新仕様レポート画面（`result_manyhands.html`）を正常にレンダリングすることを検証。
+- `test_player_action_not_in_candidates_does_not_400`: プレイヤーの実際の選択が Akochan の候補表に無い局面でも 400 エラーにならず、「期待値差を算出できませんでした」として 200 OK で描画されることを検証。
 
 ---
 
@@ -403,7 +407,7 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
         }
       ]
     },
-    "commentary": "（loss >= 0.15 の局面に付与されるアドバイス文。それ以外は null）"
+    "commentary": "（期待値差の大きい順ワースト5の局面に付与されるアドバイス文。それ以外は null）"
   }
 ]
 ```

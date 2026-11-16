@@ -139,7 +139,7 @@ python backend/test_app.py
         }
       ]
     },
-    "commentary": "（期待値ロスが 0.15 以上の局面に付与される LLM のアドバイス文）"
+    "commentary": "（期待値ロスが大きい順ワースト5の局面に付与される LLM のアドバイス文）"
   }
 ]
 ```
