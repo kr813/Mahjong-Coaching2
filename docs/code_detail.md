@@ -69,6 +69,7 @@ Mahjong-Coaching2/
     ├── app.py                      # Flask アプリケーション本体（API ルーティング）
     ├── utils.py                    # 処理オーケストレーション（解析・LLM 付与）
     ├── build_ai_input.py           # レポート HTML から新仕様 JSON への統合モジュール
+    ├── shanten_calculator.py       # 手牌のシャンテン数および有効牌・受け入れ枚数計算モジュール
     ├── build_report.py             # 新仕様 JSON から画面用ビューモデルへの変換モジュール
     ├── reconstruct_table_state.py  # 天鳳ログから卓状況（河・副露・手牌）の復元モジュール
     ├── interactakochan.py          # Akochan サーバー連携モジュール（curl 経由）
@@ -305,7 +306,22 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 
 ---
 
-### 4.9 `test_app.py` — 単体テストスイート
+### 4.9 `shanten_calculator.py` — 向聴数（シャンテン数）・受け入れ枚数計算モジュール
+
+打牌後の手牌（13枚 / 副露がある場合は 10枚, 7枚, 4枚, 1枚）に対して、一般手（面子手）・七対子・国士無双のシャンテン数および有効牌（ツモるとシャンテン数が1進む牌）・受け入れ枚数を計算する Pure Python モジュールです。外部ライブラリへの依存がなく、数十マイクロ秒の超高速で計算が完了します。
+
+#### 主要機能
+1. **`calculate_shanten(hand_tiles, meld_count=0)`**:
+   - 34種の牌配列に対し、雀頭あり／なしの面子・塔子探索、七対子判定、国士無双判定の最小値をシャンテン数として返却（0=テンパイ、1=一向聴...）。
+2. **`calculate_acceptance(post_hand_tiles, meld_count=0, visible_tiles=None)`**:
+   - 全34牌を仮想的に1枚引いたときのシャンテン数を判定し、手牌のシャンテン数が下がる牌（有効牌）をすべて抽出。
+   - 各有効牌について、手牌外の最大枚数（`4 - 手牌内枚数`）から計算した `max_count` と、卓上で見えている牌（`visible_tiles`）を差し引いた実質山残り枚数 `remaining_count` を算出。
+3. **`compute_choice_acceptance(choice, hand_with_trigger_tile, melds, visible_tiles)`**:
+   - プレイヤーまたは AI の選択（打牌・ポン/チー後の打牌）から打牌後手牌を作成し、受け入れ情報辞書（`shanten`, `shanten_desc`, `tiles`, `remaining_count`, `max_count`）を返却。
+
+---
+
+### 4.10 `test_app.py` — 単体テストスイート
 
 `unittest` をベースにした自動テストモジュール。モックを使用して Akochan / OCI の実環境に依存せずに高速にテスト可能です。
 
@@ -313,9 +329,10 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 - `test_empty_request`: 入力データが空の場合に HTTP 400 が返ることを検証。
 - `test_invalid_text_input_returns_400`: URLでも有効なJSONでもない文字列に対して HTTP 400 が返ることを検証。
 - `test_index_page`: ルート (`/`) への GET リクエストで入力フォーム画面（`index.html`）が正常に返ることを検証。
-- `test_successful_analysis_json_format`: 実サンプル HTML レポート（`test_report.html`）を入力とし、`POST /api/analyze` が 200 OK で新仕様の全フィールド（`meta`, `situation`, `self`, `others`, `hidden_info`, `decision`, `commentary`）を含む JSON 配列を返すことを検証。
+- `test_successful_analysis_json_format`: 実サンプル HTML レポート（`test_report.html`）を入力とし、`POST /api/analyze` が 200 OK で新仕様の全フィールド（`meta`, `situation`, `self`, `others`, `hidden_info`, `decision`, `commentary`、および打牌の `acceptance` スキーマ）を含む JSON 配列を返すことを検証。
 - `test_successful_analysis_html_format`: ブラウザアクセス時（`Accept: text/html`）に `POST /analyze` が 200 OK で新仕様レポート画面（`result_manyhands.html`）を正常にレンダリングすることを検証。
 - `test_player_action_not_in_candidates_does_not_400`: プレイヤーの実際の選択が Akochan の候補表に無い局面でも 400 エラーにならず、「期待値差を算出できませんでした」として 200 OK で描画されることを検証。
+- `test_shanten_calculator_logic`: テンパイ（待ち牌・受け入れ枚数・見え牌除外）、一向聴、打牌シミュレーションが正確に計算されることを検証。
 
 ---
 
@@ -381,25 +398,59 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
     "decision": {
       "player_choice": {
         "type": "discard",
-        "tile": "w"
+        "tile": "w",
+        "acceptance": {
+          "shanten": 1,
+          "shanten_desc": "一向聴",
+          "tiles": ["1m", "4m", "3s", "6s"],
+          "remaining_count": 11,
+          "max_count": 14
+        }
       },
       "ai_choice": {
         "type": "discard",
-        "tile": "e"
+        "tile": "e",
+        "acceptance": {
+          "shanten": 1,
+          "shanten_desc": "一向聴",
+          "tiles": ["1m", "4m", "2s", "3s", "6s"],
+          "remaining_count": 15,
+          "max_count": 18
+        }
       },
       "loss": 0.02832,
       "player_pt_ev": -0.90394,
       "ai_pt_ev": -0.87562,
       "candidates": [
         {
-          "action": { "type": "discard", "tile": "e" },
+          "action": {
+            "type": "discard",
+            "tile": "e",
+            "acceptance": {
+              "shanten": 1,
+              "shanten_desc": "一向聴",
+              "tiles": ["1m", "4m", "2s", "3s", "6s"],
+              "remaining_count": 15,
+              "max_count": 18
+            }
+          },
           "pt_ev": -0.87562,
           "deal_in_pct": 0.00034,
           "post_deal_in_pt_ev": -32.16042,
           "tile_passes_pt_ev": -0.87551
         },
         {
-          "action": { "type": "discard", "tile": "w" },
+          "action": {
+            "type": "discard",
+            "tile": "w",
+            "acceptance": {
+              "shanten": 1,
+              "shanten_desc": "一向聴",
+              "tiles": ["1m", "4m", "3s", "6s"],
+              "remaining_count": 11,
+              "max_count": 14
+            }
+          },
           "pt_ev": -0.90394,
           "deal_in_pct": 0.00034,
           "post_deal_in_pt_ev": -32.16042,
@@ -417,6 +468,17 @@ OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用�
 - 筒子: `1p`〜`9p`（赤5: `5pr`）
 - 索子: `1s`〜`9s`（赤5: `5sr`）
 - 字牌: `e`（東）, `s`（南）, `w`（西）, `n`（北）, `p`（白）, `f`（發）, `c`（中）
+
+### 行動と受け入れ情報 (`acceptance`)
+打牌行動（`discard` およびチー・ポン後の打牌）には、打牌後の手牌から算出した受け入れ情報 `acceptance` が付与されます。打牌を伴わない行動（スルー、鳴きのみ、ロン、ツモ等）では `null` となります。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `shanten` | `int` | 打牌後の向聴数（`0`: テンパイ、`1`: 一向聴、`2`: 二向聴...） |
+| `shanten_desc` | `string` | 向聴数の日本語名称（`"テンパイ"`, `"一向聴"` など） |
+| `tiles` | `list[string]` | ツモるとシャンテン数が1進む有効牌のリスト（例: `["1m", "4m"]`） |
+| `remaining_count` | `int` | 実戦の場見え（自他家の河・副露、自手牌、ドラ表示牌）を差し引いた山残り枚数合計 |
+| `max_count` | `int` | 手牌外の理論上の最大受け入れ枚数合計（各牌 `4 - 手牌内枚数`） |
 
 ---
 

@@ -22,6 +22,7 @@ import sys
 from bs4 import BeautifulSoup
 
 import reconstruct_table_state as rts
+import shanten_calculator as sc
 
 REL_JA = {"self": "自分", "shimocha": "下家", "toimen": "対面", "kamicha": "上家"}
 TILE_RE = r"\[([^\]]+)\]"
@@ -146,6 +147,32 @@ def build(html, viewer=None):
             pl_ev = next((c for c in cands if action_key(c["action"]) == action_key(player)), None)
             pt_player = pl_ev["pt_ev"] if pl_ev else None        # Akochanが評価できなかった局面や候補外の行動は null
             pt_ai = ai_ev["pt_ev"]
+
+            # 実戦で見えている牌（自分の手牌・副露・河、他家の副露・河、ドラ表示牌）を収集
+            visible_tiles = list(ent["closed"])
+            for m in me["melds"]:
+                visible_tiles.extend(m["tiles"])
+            for r in me["river"]:
+                visible_tiles.append(r["tile"])
+            for rel_k in ("shimocha", "toimen", "kamicha"):
+                pk = by_rel[rel_k]
+                for m in pk["melds"]:
+                    visible_tiles.extend(m["tiles"])
+                for r in pk["river"]:
+                    visible_tiles.append(r["tile"])
+            visible_tiles.extend(snap["dora_indicators"])
+
+            # プレイヤーおよびAIの選択について受け入れ枚数を計算して組み込む
+            player["acceptance"] = sc.compute_choice_acceptance(
+                player, ent["closed"], melds=me["melds"], visible_tiles=visible_tiles
+            )
+            ai["acceptance"] = sc.compute_choice_acceptance(
+                ai, ent["closed"], melds=me["melds"], visible_tiles=visible_tiles
+            )
+            for cand in cands:
+                cand["action"]["acceptance"] = sc.compute_choice_acceptance(
+                    cand["action"], ent["closed"], melds=me["melds"], visible_tiles=visible_tiles
+                )
 
             others = {}
             for rel in ("shimocha", "toimen", "kamicha"):

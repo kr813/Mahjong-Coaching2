@@ -65,11 +65,25 @@ def require_dict(parent: dict[str, Any], key: str, path: str) -> dict[str, Any]:
     return value
 
 
+def validate_acceptance(acc: Any, path: str) -> dict[str, Any] | None:
+    if acc is None:
+        return None
+    if not isinstance(acc, dict):
+        raise ValueError(f"{path} はオブジェクトか null にしてください: {acc!r}")
+    for key in ("shanten", "remaining_count", "max_count"):
+        if key in acc and acc[key] is not None and (not isinstance(acc[key], int) or isinstance(acc[key], bool)):
+            raise ValueError(f"{path}.{key} は整数にしてください: {acc[key]!r}")
+    if "tiles" in acc and not isinstance(acc["tiles"], list):
+        raise ValueError(f"{path}.tiles は配列にしてください: {acc['tiles']!r}")
+    return acc
+
+
 def parse_choice(choice: Any, path: str) -> dict[str, Any]:
     """行動 {"type": ...} → 画面用の辞書（検査つき）。不正なら ValueError"""
     if not isinstance(choice, dict) or "type" not in choice:
         raise ValueError(f'{path} は {{"type": ...}} のオブジェクトで渡してください: {choice!r}')
     kind = choice["type"]
+    out: dict[str, Any] = {}
     if kind == "discard":
         check_tile(choice.get("tile"), f"{path}.tile")
         out = {"type": "discard", "tile": choice["tile"]}
@@ -78,11 +92,10 @@ def parse_choice(choice: Any, path: str) -> dict[str, Any]:
             raise ValueError(f"{path}.riichi は true / false にしてください: {riichi!r}")
         if riichi:
             out["riichi"] = True
-        return out
-    if kind in CHOICE_KAN:
+    elif kind in CHOICE_KAN:
         check_tile(choice.get("tile"), f"{path}.tile")
-        return {"type": kind, "tile": choice["tile"]}
-    if kind in ("pon", "chi"):
+        out = {"type": kind, "tile": choice["tile"]}
+    elif kind in ("pon", "chi"):
         tiles = choice.get("with_tiles")
         if not isinstance(tiles, list) or len(tiles) != 2:
             raise ValueError(f"{path}.with_tiles は手牌の2枚の配列にしてください: {tiles!r}")
@@ -92,13 +105,17 @@ def parse_choice(choice: Any, path: str) -> dict[str, Any]:
         if choice.get("then_discard") is not None:
             check_tile(choice["then_discard"], f"{path}.then_discard")
             out["then_discard"] = choice["then_discard"]
-        return out
-    if kind in CHOICE_NO_ARG:
-        return {"type": kind}
-    raise ValueError(
-        f"{path}.type = {kind!r} は不正です。"
-        f"discard / pon / chi / daiminkan / kakan / ankan / skip / ron / tsumo / riichi のどれかにしてください"
-    )
+    elif kind in CHOICE_NO_ARG:
+        out = {"type": kind}
+    else:
+        raise ValueError(
+            f"{path}.type = {kind!r} は不正です。"
+            f"discard / pon / chi / daiminkan / kakan / ankan / skip / ron / tsumo / riichi のどれかにしてください"
+        )
+
+    if "acceptance" in choice:
+        out["acceptance"] = validate_acceptance(choice.get("acceptance"), f"{path}.acceptance")
+    return out
 
 
 def validate_meld(meld: Any, path: str) -> None:
@@ -291,6 +308,21 @@ def worst_ranks(losses: list[float | None], n: int = ADVICE_WORST_N) -> dict[int
     return {i: rank for rank, (i, _) in enumerate(scored[:n], start=1)}
 
 
+def is_same_action(a1: dict[str, Any], a2: dict[str, Any]) -> bool:
+    if a1.get("type") != a2.get("type"):
+        return False
+    if a1.get("type") == "discard":
+        return a1.get("tile") == a2.get("tile") and bool(a1.get("riichi")) == bool(a2.get("riichi"))
+    if a1.get("type") in ("pon", "chi"):
+        return (
+            sorted(a1.get("with_tiles", [])) == sorted(a2.get("with_tiles", []))
+            and a1.get("then_discard") == a2.get("then_discard")
+        )
+    if a1.get("type") in CHOICE_KAN:
+        return a1.get("tile") == a2.get("tile")
+    return True
+
+
 def entry_view(rec: dict[str, Any], threshold: float, worst_rank: int | None = None) -> dict[str, Any]:
     """局面1件（新形式）→ 画面用の辞書。画面に必要な項目だけを、JSONから抽出する"""
     sit, me, dec = rec["situation"], rec["self"], rec["decision"]
@@ -319,7 +351,7 @@ def entry_view(rec: dict[str, Any], threshold: float, worst_rank: int | None = N
         "player_choice": player_choice,
         "ai_choice": ai_choice,
         "loss": loss,
-        "is_match": player_choice == ai_choice,
+        "is_match": is_same_action(player_choice, ai_choice),
         "is_warning": loss is not None and abs(loss) >= threshold,
         "worst_rank": worst_rank,
         "commentary": rec.get("commentary"),

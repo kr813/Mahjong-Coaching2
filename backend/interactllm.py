@@ -35,14 +35,20 @@ def _choice_to_str(choice: dict | str | None) -> str:
     if isinstance(choice, dict):
         action_type = choice.get("type", "")
         tile = _tile_ja(choice.get("tile", ""))
+        acc = choice.get("acceptance")
+        acc_str = ""
+        if isinstance(acc, dict) and acc.get("remaining_count") is not None:
+            sh_desc = acc.get("shanten_desc") or f"{acc.get('shanten', '')}向聴"
+            acc_str = f" [{sh_desc} / 受け入れ{acc.get('remaining_count')}枚]"
         if action_type == "discard":
             riichi = " 立直" if choice.get("riichi") else ""
-            return f"打 {tile}{riichi}" if tile else "打牌"
+            res = f"打 {tile}{riichi}" if tile else "打牌"
+            return f"{res}{acc_str}"
         if action_type in ("pon", "chi"):
             with_tiles = " ".join(_tile_ja(t) for t in choice.get("with_tiles", []))
             then_cut = f" → 打 {_tile_ja(choice.get('then_discard'))}" if choice.get("then_discard") else ""
             label = "ポン" if action_type == "pon" else "チー"
-            return f"{label} ({with_tiles}){then_cut}"
+            return f"{label} ({with_tiles}){then_cut}{acc_str}"
         if action_type in ("daiminkan", "kakan", "ankan"):
             label = {"daiminkan": "大明槓", "kakan": "加槓", "ankan": "暗槓"}[action_type]
             return f"{label} {tile}"

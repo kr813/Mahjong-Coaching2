@@ -17,6 +17,7 @@ AI (Akochan / mjai-reviewer) の麻雀牌譜解析結果から卓状況（河・
   - **`app.py`**: アプリケーションのメインエントリーポイント（Flask）
   - **`utils.py`**: 解析実行およびデータ統合のオーケストレーション
   - **`build_ai_input.py`**: レポートHTMLから各局面の評価値・候補手・卓状況を統合し、新仕様 JSON を生成するモジュール
+  - **`shanten_calculator.py`**: 手牌の向聴数（シャンテン数）および有効牌・受け入れ枚数（残り枚数・最大枚数）を高速計算するモジュール
   - **`build_report.py`**: 新仕様 JSON から画面（`result_manyhands.html`）用ビューモデルへの変換モジュール
   - **`reconstruct_table_state.py`**: 埋め込み天鳳形式ログから自他家の手牌・河・副露・ドラなどの卓状況を完全復元するモジュール
   - **`interactakochan.py`**: Akochan 解析エンジン（mjai-reviewer サーバー）との連携モジュール
@@ -124,14 +125,44 @@ python backend/test_app.py
       }
     },
     "decision": {
-      "player_choice": { "type": "discard", "tile": "w" },
-      "ai_choice": { "type": "discard", "tile": "e" },
+      "player_choice": {
+        "type": "discard",
+        "tile": "w",
+        "acceptance": {
+          "shanten": 1,
+          "shanten_desc": "一向聴",
+          "tiles": ["1m", "4m", "3s", "6s"],
+          "remaining_count": 11,
+          "max_count": 14
+        }
+      },
+      "ai_choice": {
+        "type": "discard",
+        "tile": "e",
+        "acceptance": {
+          "shanten": 1,
+          "shanten_desc": "一向聴",
+          "tiles": ["1m", "4m", "2s", "3s", "6s"],
+          "remaining_count": 15,
+          "max_count": 18
+        }
+      },
       "loss": 0.02832,
       "player_pt_ev": -0.90394,
       "ai_pt_ev": -0.87562,
       "candidates": [
         {
-          "action": { "type": "discard", "tile": "e" },
+          "action": {
+            "type": "discard",
+            "tile": "e",
+            "acceptance": {
+              "shanten": 1,
+              "shanten_desc": "一向聴",
+              "tiles": ["1m", "4m", "2s", "3s", "6s"],
+              "remaining_count": 15,
+              "max_count": 18
+            }
+          },
           "pt_ev": -0.87562,
           "deal_in_pct": 0.00034,
           "post_deal_in_pt_ev": -32.16042,
