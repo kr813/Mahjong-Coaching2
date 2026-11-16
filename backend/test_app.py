@@ -110,6 +110,9 @@ class MahjongCoachingBackendTestCase(unittest.TestCase):
             self.assertIn("東1局", html_text)
             self.assertIn("マークの見方:", html_text)
             self.assertIn("AIからのアドバイス（ワースト1）:", html_text)
+            self.assertIn("acceptance-info", html_text)
+            self.assertIn("acc-item", html_text)
+            self.assertIn("受け入れ", html_text)
 
     def test_player_action_not_in_candidates_does_not_400(self):
         if not self.sample_html_path.exists():

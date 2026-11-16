@@ -10,6 +10,11 @@
 .rv.riichi .tile{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-90deg)}
 .rv.called .tile{opacity:.3}
 .rv.tsumogiri:after{content:"";position:absolute;left:2px;right:2px;bottom:-3px;height:2px;border-radius:1px;background:#4682b4}
+.acceptance-info{font-size:85%;color:#555;margin-left:.4em;vertical-align:middle}
+.acc-tiles{display:inline-flex;flex-wrap:wrap;align-items:center;gap:3px;vertical-align:middle;margin-left:2px}
+.acc-item{display:inline-flex;align-items:center;white-space:nowrap;vertical-align:middle}
+.acc-item .tile{width:20px;height:28px;vertical-align:middle}
+.acc-count{font-size:12px;font-weight:700;color:#444;margin-left:1px}
 </style>{% endraw %}
 {#- 牌1枚: SVG(#pai-<牌コード>)。未知の牌コードは [コード] の文字表示にフォールバック -#}
 {% macro tile(code) -%}
@@ -26,7 +31,7 @@
 {%- elif a.type == 'tsumo' -%}ツモ
 {%- else -%}{{ a.type }}
 {%- endif -%}
-{%- if a.acceptance -%}<span class=acceptance-info style="font-size:85%;color:#555;margin-left:.4em">({{ a.acceptance.shanten_desc }} / 受け入れ{{ a.acceptance.remaining_count }}枚{% if a.acceptance.details %}: {% for d in a.acceptance.details %}{{ tile(d.tile) }}×{{ d.remaining }}{% if not loop.last %} {% endif %}{% endfor %}{% endif %})</span>{%- endif -%}
+{%- if a.acceptance -%}<span class=acceptance-info>({{ a.acceptance.shanten_desc }} / 受け入れ{{ a.acceptance.remaining_count }}枚{% if a.acceptance.details %}: <span class=acc-tiles>{% for d in a.acceptance.details %}<span class=acc-item>{{ tile(d.tile) }}<span class=acc-count>×{{ d.remaining }}</span></span>{% endfor %}</span>{% endif %})</span>{%- endif -%}
 {%- endmacro %}
 <body><h1 class=title>{{ title }}</h1><button title="Go to top" id=top-button onclick=goToTop()>▲</button>
 <details class=collapse open><summary>目次</summary> <div class=kyoku-toc><ol>{% for k in kyokus %}<li><a class=no-visit href=#{{ k.anchor }}>{{ k.name }}</a>{% endfor %}</ol>{% if kyokus|selectattr('end_status')|list %}<ol class=end-status-list>{% for k in kyokus %}<li class=end-status-item><span class=end-status>{{ k.end_status or '—' }}</span>{% endfor %}</ol>{% endif %}</div></details>
