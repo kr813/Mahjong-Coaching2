@@ -252,7 +252,7 @@ flowchart TD
     ├── reconstruct_table_state.py  # 天鳳ログから卓状況（河・副露・手牌）の復元モジュール
     ├── interactakochan.py          # Akochan サーバー連携モジュール（curl 経由）
     ├── interactllm.py              # OCI Generative AI Agent 連携モジュール
-    ├── prompt.txt                  # AI コーチ向けプロンプトテンプレート
+    ├── prompt.txt                  # OCI 側に登録する AI コーチの指示文
     ├── requirements.txt            # Python 依存パッケージ定義
     ├── test_app.py                 # 単体テスト・スキーマ検証スクリプト
     ├── source/                     # サンプル・テスト用ファイル
@@ -437,24 +437,39 @@ sequenceDiagram
 <hr />
 <h3 id="46-interactllmpy-oci-generative-ai-agent">4.6 <code>interactllm.py</code> — OCI Generative AI Agent 連携モジュール</h3>
 <p>OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用し、プロンプトに基づいてアドバイステキストを生成します。</p>
+<h4 id="linux-oci">Linux で OCI エンドポイントを切り替える</h4>
+<p>OCI コンソールで対象のエージェント・エンドポイントの OCID 全体をコピーし、<code>OCI_AGENT_ENDPOINT_OCID</code> に設定します。接続リージョンは OCID から取得します。未設定または空白の場合は、従来の大阪リージョンのエンドポイントを使用します。</p>
+<p><strong>端末から起動する場合</strong></p>
+<p>リポジトリのルートから以下を実行します。Python は依存関係をインストールした環境のものを使ってください。</p>
+<pre><code class="language-bash">cd backend
+export OCI_AGENT_ENDPOINT_OCID='&lt;エンドポイントの OCID 全体&gt;'
+python app.py
+</code></pre>
+<p><code>export</code> は、その端末から以降に起動するプロセスに適用されます。すでにバックエンドを起動している場合は、設定後に起動し直してください。</p>
+<p><strong>systemd サービスとして起動している場合</strong></p>
+<p><code>mahjong-coaching.service</code> を実際のサービス名に置き換えて実行します。</p>
+<pre><code class="language-bash">sudo systemctl edit mahjong-coaching.service
+</code></pre>
+<p>開いたエディターに以下を保存します。</p>
+<pre><code class="language-ini">[Service]
+Environment=&quot;OCI_AGENT_ENDPOINT_OCID=&lt;エンドポイントの OCID 全体&gt;&quot;
+</code></pre>
+<p>変更を読み込み、サービスを再起動します。</p>
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl restart mahjong-coaching.service
+</code></pre>
 <h4 id="_7">フェイルセーフ設計</h4>
 <p>ローカル開発環境やテスト環境など、OCI の認証情報が存在しない場合でもサーバー全体が落ちないよう多層のフォールバック機構を備えています：
 1. <code>oci.auth.signers.InstancePrincipalsSecurityTokenSigner()</code>（OCI クラウドインスタンス上での実行時認証）を試行。
 2. 失敗した場合、ローカルの <code>~/.oci/config</code>（CLI 認証プロファイル）の読み込みを試行。
 3. いずれの認証も失敗した場合は例外をキャッチし、ログに警告（<code>logger.warning</code>）を出力した上で <code>None</code> を返却（<code>commentary: null</code> として安全に継続）。</p>
-<h4 id="_8">プロンプト入力データフォーマット</h4>
-<p>新形式の局面レコード（<code>rec</code>）から牌コードを日本語表記（<code>1萬</code>・<code>赤5筒</code>・<code>東</code>・<code>南</code>・<code>白</code> 等）に整形し、卓状況を含めて <code>prompt.txt</code> のテンプレートに流し込みます：
-- <code>{kyoku}</code>: 局・本場・供託・ドラ表示牌（例: <code>"東1局 0本場 (供託0本 / ドラ表示牌: 東)"</code>）
-- <code>{turn}</code>: 巡目およびきっかけ牌（例: <code>"8 (自摸: 6筒)"</code> または <code>"5 (下家の打牌: 中)"</code>）
-- <code>{tehai}</code>: 門前手牌、自風・持ち点、自分の副露・河、および他家3人（下家・対面・上家）の持ち点・リーチ状態・副露・河
-- <code>{ai_discard}</code>: AI推奨手（例: <code>"打 東"</code>）
-- <code>{ai_ev}</code>: AI手の期待値（例: <code>-0.87562</code>）
-- <code>{player_discard}</code>: プレイヤーの選択手（例: <code>"打 西"</code>）
-- <code>{player_ev}</code>: プレイヤー選択の期待値（例: <code>-0.90394</code>）</p>
+<h4 id="oci">OCI への入力と再生成</h4>
+<p>局面レコードから牌コードを日本語表記（<code>1萬</code>・<code>赤5筒</code>・<code>東</code> など）に整形し、局・巡目・ドラ・手牌・副露・他家の状況および両者の選択と期待値を <code>situation</code> にまとめて送ります。回答形式は <code>response_profile</code> で指定します。コーチの指示文は OCI 側で管理します。登録方法は <a href="../README.md#oci-の助言生成を使う場合">README</a> を参照してください。</p>
+<p>初回は <code>standard</code>、空の応答または完了マーカーを欠く応答には、新しいセッションで <code>compact</code> を一度試します。完了マーカーのある本文を画面と API に返します。完了を確認できなかった局面の助言は <code>null</code> になります。</p>
 <hr />
 <h3 id="47-build_reportpy">4.7 <code>build_report.py</code> — 画面用ビューモデル生成モジュール</h3>
 <p><code>Mahjong-Coaching_FrontEnd</code> v2 の仕様に完全準拠し、バックエンドが生成した局面 JSON 配列（<code>records</code>）をブラウザ向けテンプレート（<code>result_manyhands.html</code>）に渡すビューモデル辞書へ変換します。</p>
-<h4 id="_9">主要機能</h4>
+<h4 id="_8">主要機能</h4>
 <ol>
 <li><strong><code>build_report(records)</code></strong>:</li>
 <li>局情報（<code>meta.kyoku</code>, <code>meta.honba</code>）から局ごとのブロック（<code>kyokus</code>）およびアンカー ID を生成。</li>
@@ -491,7 +506,7 @@ sequenceDiagram
 <hr />
 <h3 id="49-shanten_calculatorpy">4.9 <code>shanten_calculator.py</code> — 向聴数（シャンテン数）・受け入れ枚数計算モジュール</h3>
 <p>打牌後の手牌（13枚 / 副露がある場合は 10枚, 7枚, 4枚, 1枚）に対して、一般手（面子手）・七対子・国士無双のシャンテン数および有効牌（ツモるとシャンテン数が1進む牌）・受け入れ枚数を計算する Pure Python モジュールです。外部ライブラリへの依存がなく、数十マイクロ秒の超高速で計算が完了します。</p>
-<h4 id="_10">主要機能</h4>
+<h4 id="_9">主要機能</h4>
 <ol>
 <li><strong><code>calculate_shanten(hand_tiles, meld_count=0)</code></strong>:</li>
 <li>34種の牌配列に対し、雀頭あり／なしの面子・塔子探索、七対子判定、国士無双判定の最小値をシャンテン数として返却（0=テンパイ、1=一向聴...）。</li>
@@ -724,13 +739,13 @@ sequenceDiagram
 </table>
 <hr />
 <h2 id="7">7. 環境要件とセットアップ</h2>
-<h3 id="_11">前提環境</h3>
+<h3 id="_10">前提環境</h3>
 <ul>
 <li>Python: 3.10 以上</li>
 <li>OS: Linux / macOS / Windows</li>
 <li>外部依存: <code>curl</code> コマンド、<code>mjai-reviewer</code>（ポート 8000 で起動）</li>
 </ul>
-<h3 id="_12">起動・テストコマンド</h3>
+<h3 id="_11">起動・テストコマンド</h3>
 <pre><code class="language-bash"># 依存ライブラリのインストール
 pip install -r backend/requirements.txt
 

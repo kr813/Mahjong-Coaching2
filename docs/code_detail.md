@@ -247,6 +247,44 @@ HTML レポート内の `<textarea>` に含まれる天鳳形式 JSON ログ（`
 
 OCI (Oracle Cloud Infrastructure) の Generative AI Agent Runtime SDK を利用し、プロンプトに基づいてアドバイステキストを生成します。
 
+#### Linux で OCI エンドポイントを切り替える
+
+OCI コンソールで対象のエージェント・エンドポイントの OCID 全体をコピーし、`OCI_AGENT_ENDPOINT_OCID` に設定します。接続リージョンは OCID から取得します。未設定または空白の場合は、従来の大阪リージョンのエンドポイントを使用します。
+
+**端末から起動する場合**
+
+リポジトリのルートから以下を実行します。Python は依存関係をインストールした環境のものを使ってください。
+
+```bash
+cd backend
+export OCI_AGENT_ENDPOINT_OCID='<エンドポイントの OCID 全体>'
+python app.py
+```
+
+`export` は、その端末から以降に起動するプロセスに適用されます。すでにバックエンドを起動している場合は、設定後に起動し直してください。
+
+**systemd サービスとして起動している場合**
+
+`mahjong-coaching.service` を実際のサービス名に置き換えて実行します。
+
+```bash
+sudo systemctl edit mahjong-coaching.service
+```
+
+開いたエディターに以下を保存します。
+
+```ini
+[Service]
+Environment="OCI_AGENT_ENDPOINT_OCID=<エンドポイントの OCID 全体>"
+```
+
+変更を読み込み、サービスを再起動します。
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart mahjong-coaching.service
+```
+
 #### フェイルセーフ設計
 ローカル開発環境やテスト環境など、OCI の認証情報が存在しない場合でもサーバー全体が落ちないよう多層のフォールバック機構を備えています：
 1. `oci.auth.signers.InstancePrincipalsSecurityTokenSigner()`（OCI クラウドインスタンス上での実行時認証）を試行。
