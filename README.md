@@ -22,7 +22,7 @@ AI (Akochan / mjai-reviewer) の麻雀牌譜解析結果から卓状況（河・
   - **`reconstruct_table_state.py`**: 埋め込み天鳳形式ログから自他家の手牌・河・副露・ドラなどの卓状況を完全復元するモジュール
   - **`interactakochan.py`**: Akochan 解析エンジン（mjai-reviewer サーバー）との連携モジュール
   - **`interactllm.py`**: OCI Generative AI Agent と連携してアドバイスを生成するモジュール
-  - **`prompt.txt`**: AIコーチ向けのプロンプトテンプレート
+  - **`prompt.txt`**: OCI 側に登録する AI コーチの指示文
   - **`requirements.txt`**: 依存 Python パッケージ定義（Flask, beautifulsoup4, lxml, oci）
   - **`test_app.py`**: 自動テストスクリプト
 
@@ -56,6 +56,18 @@ python backend/test_app.py
 ```
 
 ---
+
+## OCI の助言生成を使う場合
+
+アプリをデプロイする前に、対象エンドポイントで実際に助言本文を生成するモデルのカスタム指示に [backend/prompt.txt](backend/prompt.txt) の内容を登録してください。たとえば RAG ツールが回答本文を生成する構成では、生成モデルのカスタム指示（`generationLlmCustomization.instruction`）が設定先です。利用中の構成に本文生成用のカスタム指示があるかを確認し、OCI 側で局面 JSON を試して、回答の最終行に `[[ADVICE_COMPLETE]]` が付くことを確認してください。
+
+検証用エンドポイントに切り替える場合は、バックエンド起動時に `OCI_AGENT_ENDPOINT_OCID` にそのエンドポイントの OCID を指定します。接続リージョンは OCID から取得します。未設定または空白の場合は従来の大阪リージョンのエンドポイントを使用します。
+
+```bash
+OCI_AGENT_ENDPOINT_OCID='<検証用エンドポイントの OCID>' python app.py
+```
+
+アプリは局面データと回答形式を示す `response_profile` を JSON で送信します。初回は `standard`、応答が空か完了マーカーを欠く場合は同じ局面を `compact` で一度だけ再生成します。完了マーカーは表示前に除去されます。どちらの試行でも完了を確認できなければ、牌譜解析結果は返し、該当局面の `commentary` は `null` になります。
 
 ## API エンドポイント
 

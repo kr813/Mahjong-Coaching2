@@ -1,16 +1,17 @@
+import json
 import logging
 import os
+import re
+from functools import lru_cache
+
 import oci
 from oci.generative_ai_agent_runtime import GenerativeAiAgentRuntimeClient
 from oci.generative_ai_agent_runtime.models import ChatDetails, CreateSessionDetails
 
 logger = logging.getLogger(__name__)
 
-# AIエージェントのエンドポイントを入力
-AGENT_ENDPOINT_OCID = "ocid1.genaiagentendpoint.oc1.ap-osaka-1.amaaaaaapimhcliaxbtu4ubtsaab7sydtcj4cut2aqdshdhtwpgirrqqqrwq"
-REGION = "ap-osaka-1"
-
-_cached_client = None
+DEFAULT_AGENT_ENDPOINT_OCID = "ocid1.genaiagentendpoint.oc1.ap-osaka-1.amaaaaaapimhcliaxbtu4ubtsaab7sydtcj4cut2aqdshdhtwpgirrqqqrwq"
+ADVICE_END_MARKER = "[[ADVICE_COMPLETE]]"
 
 
 HONOR_JA = {"e": "東", "s": "南", "w": "西", "n": "北", "p": "白", "f": "發", "c": "中"}
@@ -99,7 +100,7 @@ def _melds_to_str(melds: list[dict]) -> str:
 
 
 def _format_record(rec: dict) -> dict:
-    """新形式レコードまたは旧形式辞書をプロンプト埋め込み用の辞書に正規化する。"""
+    """新形式レコードまたは旧形式辞書をOCI に送信する局面データに正規化する。"""
     if "meta" in rec and "decision" in rec:
         meta = rec.get("meta", {})
         sit = rec.get("situation", {})
@@ -210,74 +211,83 @@ def _format_record(rec: dict) -> dict:
     }
 
 
-def _get_client_and_signer():
-    """OCIクライアントを取得（初回のみ生成してキャッシュ）。InstancePrincipalsを優先し、無ければ ~/.oci/config を試す。"""
-    global _cached_client
-    if _cached_client is not None:
-        return _cached_client
-
+@lru_cache(maxsize=1)
+def _get_client_and_signer(region: str):
+    """Instance Principals を優先し、認証できなければ ~/.oci/config を使う。"""
+    service_endpoint = f"https://agent-runtime.generativeai.{region}.oraclecloud.com"
     try:
         signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-        _cached_client = GenerativeAiAgentRuntimeClient(
-            config={"region": REGION},
-            signer=signer,
-            service_endpoint=f"https://agent-runtime.generativeai.{REGION}.oci.oraclecloud.com"
-        )
-        return _cached_client
     except Exception:
-        # ローカル環境の ~/.oci/config を試行
-        config = oci.config.from_file()
-        _cached_client = GenerativeAiAgentRuntimeClient(
-            config=config,
-            service_endpoint=f"https://agent-runtime.generativeai.{config.get('region', REGION)}.oci.oraclecloud.com"
+        config = {**oci.config.from_file(), "region": region}
+        return GenerativeAiAgentRuntimeClient(config=config, service_endpoint=service_endpoint)
+    return GenerativeAiAgentRuntimeClient(
+        config={"region": region}, signer=signer, service_endpoint=service_endpoint
+    )
+
+
+def _request_advice(client, endpoint_id: str, situation: dict, response_profile: str) -> str:
+    user_message = json.dumps(
+        {"situation": situation, "response_profile": response_profile},
+        ensure_ascii=False,
+    )
+    chat_kwargs = {"user_message": user_message, "should_stream": False}
+    # 各試行を独立させ、前の応答が再生成に混ざらないようにする。
+    try:
+        session = client.create_session(
+            create_session_details=CreateSessionDetails(
+                display_name="mahjong-coaching-session",
+                description="mahjong coaching advice session",
+            ),
+            agent_endpoint_id=endpoint_id,
         )
-        return _cached_client
+        if session.data.id:
+            chat_kwargs["session_id"] = session.data.id
+    except Exception as exc:
+        logger.info("OCI session creation failed; using sessionless chat (%s)", type(exc).__name__)
+
+    response = client.chat(
+        agent_endpoint_id=endpoint_id,
+        chat_details=ChatDetails(**chat_kwargs),
+    )
+    message = getattr(response.data, "message", None)
+    content = getattr(message, "content", None)
+    advice = getattr(content, "text", None) or ""
+    body, separator, last_line = advice.rstrip().rpartition("\n")
+    if separator and last_line.strip() == ADVICE_END_MARKER and body.strip():
+        return body.strip()
+
+    logger.warning(
+        "OCI advice missing a completed body (profile=%s, chars=%d, request_id=%s)",
+        response_profile,
+        len(advice),
+        response.headers.get("opc-request-id") if response.headers else None,
+    )
+    return ""
 
 
 def _generate_advice(parsed_data=None) -> str | None:
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    prompt_file_path = os.path.join(current_dir, "prompt.txt")
-    with open(prompt_file_path, "r", encoding="utf-8") as f:
-        template = f.read()
-
-    fmt_values = _format_record(parsed_data or {})
-    text = template.format(**fmt_values)
-
     try:
-        client = _get_client_and_signer()
-
-        # 1. セッション作成を試行（エンドポイント側でセッション無効の場合は session_id なしでチャット実行）
-        session_id = None
-        try:
-            session_response = client.create_session(
-                create_session_details=CreateSessionDetails(
-                    display_name="mahjong-coaching-session",
-                    description="mahjong coaching advice session"
-                ),
-                agent_endpoint_id=AGENT_ENDPOINT_OCID
-            )
-            session_id = session_response.data.id
-        except Exception as session_err:
-            print(f"[interactllm] create_session skipped/failed, trying sessionless chat: {session_err}", flush=True)
-
-        # 2. チャット実行
-        chat_kwargs = {"user_message": text}
-        if session_id is not None:
-            chat_kwargs["session_id"] = session_id
-
-        chat_response = client.chat(
-            agent_endpoint_id=AGENT_ENDPOINT_OCID,
-            chat_details=ChatDetails(**chat_kwargs)
+        situation = _format_record(parsed_data or {})
+        endpoint_id = os.getenv("OCI_AGENT_ENDPOINT_OCID", "").strip() or DEFAULT_AGENT_ENDPOINT_OCID
+        version, resource, _realm, region, identifier = endpoint_id.split(".", 4)
+        if (
+            version != "ocid1"
+            or resource != "genaiagentendpoint"
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", region)
+            or not identifier
+        ):
+            raise ValueError("Invalid OCI_AGENT_ENDPOINT_OCID")
+        client = _get_client_and_signer(region)
+        return (
+            _request_advice(client, endpoint_id, situation, "standard")
+            or _request_advice(client, endpoint_id, situation, "compact")
+            or None
         )
-        msg = getattr(chat_response.data, "message", None)
-        content = getattr(msg, "content", None) if msg else None
-        advice_text = getattr(content, "text", None) if content else None
-        if not advice_text:
-            print(f"[interactllm WARNING] Empty response from OCI GenAI: {chat_response.data}", flush=True)
-        return advice_text
-    except Exception as e:
-        print(f"[interactllm ERROR] OCI GenAI advice generation failed: {type(e).__name__}: {e}", flush=True)
-        logger.warning("OCI GenAI advice generation skipped or failed: %s", e)
+    except Exception as exc:
+        logger.warning(
+            "OCI advice generation failed (type=%s, status=%s, request_id=%s)",
+            type(exc).__name__,
+            getattr(exc, "status", None),
+            getattr(exc, "request_id", None),
+        )
         return None
-
-
