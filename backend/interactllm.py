@@ -222,7 +222,7 @@ def _get_client_and_signer(region: str):
     return GenerativeAiAgentRuntimeClient(config={"region": region}, signer=signer)
 
 
-def _request_advice(client, endpoint_id: str, situation: dict, response_profile: str) -> str:
+def _request_advice(client, endpoint_id: str, situation: dict, response_profile: str) -> tuple[str, bool]:
     user_message = json.dumps(
         {"situation": situation, "response_profile": response_profile},
         ensure_ascii=False,
@@ -250,8 +250,10 @@ def _request_advice(client, endpoint_id: str, situation: dict, response_profile:
     content = getattr(message, "content", None)
     advice = getattr(content, "text", None) or ""
     body, separator, last_line = advice.rstrip().rpartition("\n")
-    if separator and last_line.strip() == ADVICE_END_MARKER and body.strip():
-        return body.strip()
+    has_marker = last_line.strip() == ADVICE_END_MARKER
+    text = (body if has_marker else advice).strip()
+    if separator and has_marker and text:
+        return text, True
 
     logger.warning(
         "OCI advice missing a completed body (profile=%s, chars=%d, request_id=%s)",
@@ -259,10 +261,11 @@ def _request_advice(client, endpoint_id: str, situation: dict, response_profile:
         len(advice),
         response.headers.get("opc-request-id") if response.headers else None,
     )
-    return ""
+    return text, False
 
 
 def _generate_advice(parsed_data=None) -> str | None:
+    standard = ""
     try:
         situation = _format_record(parsed_data or {})
         endpoint_id = os.getenv("OCI_AGENT_ENDPOINT_OCID", "").strip() or DEFAULT_AGENT_ENDPOINT_OCID
@@ -275,11 +278,13 @@ def _generate_advice(parsed_data=None) -> str | None:
         ):
             raise ValueError("Invalid OCI_AGENT_ENDPOINT_OCID")
         client = _get_client_and_signer(region)
-        return (
-            _request_advice(client, endpoint_id, situation, "standard")
-            or _request_advice(client, endpoint_id, situation, "compact")
-            or None
-        )
+        standard, complete = _request_advice(client, endpoint_id, situation, "standard")
+        if complete:
+            return standard
+        compact, complete = _request_advice(client, endpoint_id, situation, "compact")
+        if complete:
+            return compact
+        return standard or compact or None
     except Exception as exc:
         logger.warning(
             "OCI advice generation failed (type=%s, status=%s, request_id=%s)",
@@ -287,4 +292,4 @@ def _generate_advice(parsed_data=None) -> str | None:
             getattr(exc, "status", None),
             getattr(exc, "request_id", None),
         )
-        return None
+        return standard or None

@@ -71,6 +71,27 @@ class AdviceGenerationTest(unittest.TestCase):
         self.assertIsNone(interactllm._generate_advice({}))
         self.assertEqual(self.client.chat.call_count, 2)
 
+    def test_unmarked_standard_is_preferred_if_compact_is_also_unmarked(self):
+        self.client.chat.side_effect = [
+            chat_response("通常版の助言です。"),
+            chat_response("短縮版の助言です。"),
+        ]
+        self.assertEqual(interactllm._generate_advice({}), "通常版の助言です。")
+        self.assertEqual(self.client.chat.call_count, 2)
+
+    def test_unmarked_compact_is_used_if_standard_is_empty(self):
+        self.client.chat.side_effect = [chat_response(" "), chat_response("短縮版の助言です。")]
+        self.assertEqual(interactllm._generate_advice({}), "短縮版の助言です。")
+        self.assertEqual(self.client.chat.call_count, 2)
+
+    def test_compact_error_preserves_standard_advice(self):
+        self.client.chat.side_effect = [
+            chat_response("通常版の助言です。"),
+            RuntimeError("service unavailable"),
+        ]
+        self.assertEqual(interactllm._generate_advice({}), "通常版の助言です。")
+        self.assertEqual(self.client.chat.call_count, 2)
+
     def test_session_creation_failure_still_allows_chat(self):
         self.client.create_session.side_effect = RuntimeError("sessions disabled")
         self.client.chat.return_value = chat_response("助言です。\n[[ADVICE_COMPLETE]]")
