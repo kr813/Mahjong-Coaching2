@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.parse import urlsplit
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -12,6 +13,18 @@ def chat_response(text):
         data=SimpleNamespace(message=SimpleNamespace(content=SimpleNamespace(text=text))),
         headers={"opc-request-id": "test-request"},
     )
+
+
+class OciClientEndpointTest(unittest.TestCase):
+    def test_instance_principals_uses_sdk_regional_endpoint(self):
+        interactllm._get_client_and_signer.cache_clear()
+        self.addCleanup(interactllm._get_client_and_signer.cache_clear)
+        with patch("oci.auth.signers.InstancePrincipalsSecurityTokenSigner.__init__", return_value=None):
+            client = interactllm._get_client_and_signer("ap-tokyo-1")
+        self.assertEqual(
+            urlsplit(client.base_client.endpoint).hostname,
+            "agent-runtime.generativeai.ap-tokyo-1.oci.oraclecloud.com",
+        )
 
 
 class AdviceGenerationTest(unittest.TestCase):

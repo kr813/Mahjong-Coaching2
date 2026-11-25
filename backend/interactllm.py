@@ -214,15 +214,12 @@ def _format_record(rec: dict) -> dict:
 @lru_cache(maxsize=1)
 def _get_client_and_signer(region: str):
     """Instance Principals を優先し、認証できなければ ~/.oci/config を使う。"""
-    service_endpoint = f"https://agent-runtime.generativeai.{region}.oraclecloud.com"
     try:
         signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
     except Exception:
         config = {**oci.config.from_file(), "region": region}
-        return GenerativeAiAgentRuntimeClient(config=config, service_endpoint=service_endpoint)
-    return GenerativeAiAgentRuntimeClient(
-        config={"region": region}, signer=signer, service_endpoint=service_endpoint
-    )
+        return GenerativeAiAgentRuntimeClient(config=config)
+    return GenerativeAiAgentRuntimeClient(config={"region": region}, signer=signer)
 
 
 def _request_advice(client, endpoint_id: str, situation: dict, response_profile: str) -> str:
